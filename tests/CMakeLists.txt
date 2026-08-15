@@ -70,6 +70,13 @@ target_sources(test_step_response_metrics PRIVATE
     ${CMAKE_SOURCE_DIR}/src/core/step_response_metrics.cpp
 )
 
+# Test: Relay Auto-Tune (Astrom-Hagglund Ku/Tu extraction -> TL/ZN mapping)
+add_cambot_test(test_relay_tune test_relay_tune.cpp)
+target_sources(test_relay_tune PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core/relay_tune.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/step_response_metrics.cpp
+)
+
 # Test: PID Controller (gantry closed-loop upgrade)
 add_cambot_test(test_pid_controller test_pid_controller.cpp)
 

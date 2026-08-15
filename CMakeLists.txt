@@ -49,6 +49,7 @@ set(CORE_SOURCES
     src/core/structured_logger.cpp
     src/core/motion_estimator.cpp
     src/core/step_response_metrics.cpp
+    src/core/relay_tune.cpp
 )
 
 set(NETWORK_SOURCES
