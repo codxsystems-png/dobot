@@ -445,17 +445,26 @@ bool GantryAxisController::checkTuningSafety()
         abortTuning("timed out");
         return false;
     }
-    if (m_currentPositionMm < m_travelLimits.minMm + m_tuneMargin ||
-        m_currentPositionMm > m_travelLimits.maxMm - m_tuneMargin) {
-        abortTuning(QString("reached the travel-limit margin at %1")
-                        .arg(m_currentPositionMm, 0, 'f', 1));
-        return false;
-    }
-    if (std::abs(m_currentPositionMm - m_tuneCentre)
-            > TUNE_RUNAWAY_FACTOR * std::abs(m_tuneStepSize)) {
-        abortTuning(QString("runaway — %1 is far beyond the commanded excursion")
-                        .arg(m_currentPositionMm, 0, 'f', 1));
-        return false;
+    // The margin and runaway checks exist to catch a run ESCAPING toward the
+    // limits — not to stop one travelling in. During Settling the axis is
+    // deliberately crossing the workspace to reach the midpoint, and it
+    // legitimately starts outside the safe band: homing parks at the travel
+    // minimum, so every run would otherwise abort before it began. Settling
+    // is still bounded by its own 8s deadline, the feedback-loss check, and
+    // a commanded target that is inside the limits by construction.
+    if (m_tunePhase != TunePhase::Settling) {
+        if (m_currentPositionMm < m_travelLimits.minMm + m_tuneMargin ||
+            m_currentPositionMm > m_travelLimits.maxMm - m_tuneMargin) {
+            abortTuning(QString("reached the travel-limit margin at %1")
+                            .arg(m_currentPositionMm, 0, 'f', 1));
+            return false;
+        }
+        if (std::abs(m_currentPositionMm - m_tuneCentre)
+                > TUNE_RUNAWAY_FACTOR * std::abs(m_tuneStepSize)) {
+            abortTuning(QString("runaway — %1 is far beyond the commanded excursion")
+                            .arg(m_currentPositionMm, 0, 'f', 1));
+            return false;
+        }
     }
     if (m_ticksSinceEncoder > TUNE_FEEDBACK_LOSS_TICKS) {
         abortTuning("lost encoder feedback — the loop would be flying blind");
