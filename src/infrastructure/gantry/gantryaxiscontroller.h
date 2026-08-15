@@ -77,7 +77,31 @@ public slots:
     // Fallback heartbeat for when playback tick isn't running (e.g. idle)
     void heartbeat();
 
+    // ─── PID tuning ───────────────────────────────────────────────────────
+    // These deliberately drive the axis. Every one of them is gated on the
+    // axis being connected and homed, runs bounded about the middle of
+    // travel, and can be stopped at any instant by abortTuning().
+
+    /// Settles at the midpoint of travel, commands a step of `stepSizeUnits`,
+    /// captures the response, then returns to the midpoint. Emits
+    /// stepTelemetry() every tick while running, then stepTestFinished().
+    void startStepTest(double stepSizeUnits);
+
+    /// Stops any tuning activity immediately: PWM to zero, PID reset, state
+    /// back to Idle. Safe to call at any time, including when nothing is
+    /// running. Reached by every abort path — user, fault, timeout, limit.
+    void abortTuning(const QString& reason);
+
+    bool isTuningActive() const { return m_state == State::StepTest; }
+
 signals:
+    /// One per control tick while a tuning run is active (and only then, so
+    /// it costs nothing in normal operation). `stale` marks a tick where no
+    /// fresh encoder reply arrived, so `measured` is a carried-over value.
+    void stepTelemetry(double tSec, double setpoint, double measured, int pwm, bool stale);
+    void stepTestFinished();
+    void tuningAborted(const QString& reason);
+
     void connected(const QString& portName);
     void disconnected();
     void errorOccurred(const QString& message);
@@ -94,6 +118,13 @@ private:
     void handleResponse(const QString& response);
     void processClosedLoop();
     void setMotorPwm(int pwm);
+
+    /// One tick of the step-test phase machine. Returns false once the run
+    /// has ended (finished or aborted).
+    bool serviceStepTest();
+    /// The tracking PID without processClosedLoop()'s State::Tracking guard —
+    /// the step test owns the loop while it runs.
+    void processClosedLoopForTuning();
 
     // Mechanical teardown only (close port, stop timer, reset flags) — used
     // by disconnectPort() (user-initiated), connectPort()'s own pre-cleanup,
@@ -115,9 +146,36 @@ private:
         Idle,
         Homing,
         Jogging,
-        Tracking
+        Tracking,
+        StepTest
     };
     State m_state = State::Idle;
+
+    // ─── Tuning run state ─────────────────────────────────────────────────
+    enum class TunePhase {
+        None,
+        Settling,   // driving to the midpoint before the step
+        Stepping,   // the measured portion
+        Returning   // easing back to the midpoint afterwards
+    };
+    TunePhase m_tunePhase = TunePhase::None;
+
+    double m_tuneCentre     = 0.0;  // midpoint of travel, in axis units
+    double m_tuneStepSize   = 0.0;
+    double m_tuneMargin     = 0.0;  // soft boundary inset from the travel limits
+    QElapsedTimer m_tuneElapsed;    // whole-run timeout
+    QElapsedTimer m_tuneCapture;    // t=0 at the moment of the step
+    int    m_tuneSettleTicks = 0;   // consecutive ticks inside tolerance
+    int    m_ticksSinceEncoder = 0; // feedback-loss watchdog
+    bool   m_tuneSampleStale = false;
+
+    static constexpr int    TUNE_TIMEOUT_MS        = 10000;
+    static constexpr int    TUNE_SETTLE_TICKS      = 15;   // ~300ms inside tolerance
+    static constexpr double TUNE_SETTLE_TOLERANCE  = 1.0;  // axis units
+    static constexpr int    TUNE_FEEDBACK_LOSS_TICKS = 10; // 200ms with no encoder
+    static constexpr double TUNE_RUNAWAY_FACTOR    = 2.5;  // x excursion from centre
+    static constexpr double TUNE_MARGIN_FRACTION   = 0.10; // of total travel span
+    static constexpr int    TUNE_STEP_CAPTURE_MS   = 4000;
 
     // Tracking
     double m_currentPositionMm = 0.0;

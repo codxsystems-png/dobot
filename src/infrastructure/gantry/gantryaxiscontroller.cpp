@@ -133,6 +133,13 @@ void GantryAxisController::disconnectPort()
 
 void GantryAxisController::teardownConnection()
 {
+    // Losing the link mid-tuning means no feedback and no way to stop the
+    // motor over serial — cancel the run before the port closes, while the
+    // explicit "g 0" can still get out.
+    if (m_state == State::StepTest || m_tunePhase != TunePhase::None) {
+        abortTuning("connection closed");
+    }
+
     if (m_transport && m_transport->isOpen()) {
         sendCommand("g 0"); // best-effort stop before closing
         m_transport->flush();
@@ -185,6 +192,10 @@ void GantryAxisController::stopJog()
     if (!m_connected) return;
     // Also used as the general stop path for Pause/E-STOP, so unconditionally
     // halt the motor and cancel homing/tracking regardless of current state.
+    if (m_state == State::StepTest || m_tunePhase != TunePhase::None) {
+        abortTuning("stopped");
+        return; // abortTuning already zeroed the motor and reset state
+    }
     m_jogPwm = 0;
     m_state = State::Idle;
     setMotorPwm(0);
@@ -226,6 +237,166 @@ void GantryAxisController::tick(double targetMm)
         m_targetPositionMm = clampedMm;
         processClosedLoop();
     }
+}
+
+void GantryAxisController::startStepTest(double stepSizeUnits)
+{
+    // Preconditions are also enforced in the UI (buttons stay disabled), but
+    // re-checked here so nothing can drive the axis by calling this directly.
+    if (!m_connected) {
+        emit errorOccurred("Step test needs the axis connected.");
+        return;
+    }
+    if (!m_isHomed) {
+        emit errorOccurred("Step test needs the axis homed — without a known "
+                           "origin, position and travel limits are meaningless.");
+        return;
+    }
+
+    double span = m_travelLimits.maxMm - m_travelLimits.minMm;
+    double excursion = std::abs(stepSizeUnits);
+    if (span <= 0.0 || excursion <= 0.0 || span < 4.0 * excursion) {
+        emit errorOccurred(QString("Step of %1 is too large for the configured travel "
+                                    "range of %2 — needs at least 4x headroom.")
+                               .arg(excursion, 0, 'f', 1).arg(span, 0, 'f', 1));
+        return;
+    }
+
+    m_tuneCentre   = (m_travelLimits.minMm + m_travelLimits.maxMm) / 2.0;
+    m_tuneStepSize = stepSizeUnits;
+    m_tuneMargin   = span * TUNE_MARGIN_FRACTION;
+    m_tuneSettleTicks   = 0;
+    m_ticksSinceEncoder = 0;
+    m_tunePhase = TunePhase::Settling;
+    m_state     = State::StepTest;
+
+    m_pid.reset();
+    m_pidClockValid = false;
+    m_targetPositionMm = m_tuneCentre;
+    m_tuneElapsed.restart();
+    m_tuneCapture.restart();
+
+    StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+        "GantryAxisController",
+        QString("Step test starting: centre %1, step %2, margin %3")
+            .arg(m_tuneCentre, 0, 'f', 1)
+            .arg(m_tuneStepSize, 0, 'f', 1)
+            .arg(m_tuneMargin, 0, 'f', 1));
+}
+
+void GantryAxisController::abortTuning(const QString& reason)
+{
+    if (m_state != State::StepTest && m_tunePhase == TunePhase::None) {
+        // Nothing running — still force PWM low, since this is the panic path
+        // and being certain costs one serial write.
+        if (m_connected) setMotorPwm(0);
+        return;
+    }
+
+    setMotorPwm(0);          // explicit stop first, never lean on the firmware watchdog
+    m_pid.reset();
+    m_pidClockValid = false;
+    m_tunePhase = TunePhase::None;
+    m_state     = State::Idle;
+
+    StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+        "GantryAxisController", "Tuning aborted: " + reason);
+    emit tuningAborted(reason);
+}
+
+// Runs once per control tick while a step test is active. Returns false if
+// the run ended (finished or aborted) so the caller can stop driving it.
+bool GantryAxisController::serviceStepTest()
+{
+    // ─── Hard aborts, checked before anything else drives the motor ───────
+    if (m_tuneElapsed.elapsed() > TUNE_TIMEOUT_MS) {
+        abortTuning("timed out");
+        return false;
+    }
+    if (m_currentPositionMm < m_travelLimits.minMm + m_tuneMargin ||
+        m_currentPositionMm > m_travelLimits.maxMm - m_tuneMargin) {
+        abortTuning(QString("reached the travel-limit margin at %1")
+                        .arg(m_currentPositionMm, 0, 'f', 1));
+        return false;
+    }
+    if (std::abs(m_currentPositionMm - m_tuneCentre)
+            > TUNE_RUNAWAY_FACTOR * std::abs(m_tuneStepSize)) {
+        abortTuning(QString("runaway — %1 is far beyond the commanded excursion")
+                        .arg(m_currentPositionMm, 0, 'f', 1));
+        return false;
+    }
+    if (m_ticksSinceEncoder > TUNE_FEEDBACK_LOSS_TICKS) {
+        abortTuning("lost encoder feedback — the loop would be flying blind");
+        return false;
+    }
+
+    // ─── Phase machine ────────────────────────────────────────────────────
+    switch (m_tunePhase) {
+    case TunePhase::Settling:
+        m_targetPositionMm = m_tuneCentre;
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+            if (++m_tuneSettleTicks >= TUNE_SETTLE_TICKS) {
+                m_tunePhase = TunePhase::Stepping;
+                m_targetPositionMm = m_tuneCentre + m_tuneStepSize;
+                m_tuneCapture.restart();   // t = 0 at the step
+            }
+        } else {
+            m_tuneSettleTicks = 0;
+        }
+        break;
+
+    case TunePhase::Stepping:
+        m_targetPositionMm = m_tuneCentre + m_tuneStepSize;
+        if (m_tuneCapture.elapsed() > TUNE_STEP_CAPTURE_MS) {
+            m_tunePhase = TunePhase::Returning;
+            m_targetPositionMm = m_tuneCentre;
+        }
+        break;
+
+    case TunePhase::Returning:
+        m_targetPositionMm = m_tuneCentre;
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+            setMotorPwm(0);
+            m_tunePhase = TunePhase::None;
+            m_state     = State::Idle;
+            StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+                "GantryAxisController", "Step test finished");
+            emit stepTestFinished();
+            return false;
+        }
+        break;
+
+    case TunePhase::None:
+        return false;
+    }
+
+    // Drive the loop, then report this tick. Telemetry is emitted every tick
+    // regardless of whether a fresh encoder value arrived, with `stale` set —
+    // a gap in the trace is more honest than a silently interpolated one.
+    processClosedLoopForTuning();
+    emit stepTelemetry(m_tuneCapture.elapsed() / 1000.0,
+                       m_targetPositionMm,
+                       m_currentPositionMm,
+                       m_currentPwm,
+                       m_tuneSampleStale);
+    return true;
+}
+
+// The tracking PID, but without the State::Tracking guard in
+// processClosedLoop() — the step test owns the loop while it runs.
+void GantryAxisController::processClosedLoopForTuning()
+{
+    double dtSec = 0.0;
+    if (m_pidClockValid) dtSec = m_pidClock.nsecsElapsed() / 1e9;
+    m_pidClock.start();
+    m_pidClockValid = true;
+
+    double error = m_targetPositionMm - m_currentPositionMm;
+    double desiredPwmD = m_pid.compute(error, m_currentPositionMm, dtSec);
+    int desiredPwm = std::clamp(static_cast<int>(std::round(desiredPwmD)), -MAX_PWM, MAX_PWM);
+
+    int delta = std::clamp(desiredPwm - m_currentPwm, -m_pwmRampPerTick, m_pwmRampPerTick);
+    setMotorPwm(m_currentPwm + delta);
 }
 
 void GantryAxisController::heartbeat()
@@ -279,6 +450,18 @@ void GantryAxisController::heartbeat()
     case State::Jogging:
         // Resend so the Arduino's link-loss watchdog sees a live host.
         setMotorPwm(m_jogPwm);
+        if (m_pendingQuery == PendingQuery::None) {
+            sendCommand("e");
+            m_pendingQuery = PendingQuery::Encoder;
+            m_pendingTicks = 0;
+        }
+        break;
+
+    case State::StepTest:
+        // Feedback-loss watchdog: reset in handleResponse() on a real reading.
+        ++m_ticksSinceEncoder;
+        m_tuneSampleStale = (m_ticksSinceEncoder > 1);
+        if (!serviceStepTest()) return; // run ended (finished or aborted)
         if (m_pendingQuery == PendingQuery::None) {
             sendCommand("e");
             m_pendingQuery = PendingQuery::Encoder;
@@ -381,6 +564,7 @@ void GantryAxisController::handleResponse(const QString& response)
         if (ok) {
             m_lastEncoderCount = counts;
             m_currentPositionMm = counts / m_countsPerMm;
+            m_ticksSinceEncoder = 0; // fresh reading — feedback watchdog satisfied
             emit positionChanged(m_currentPositionMm);
         }
         break;

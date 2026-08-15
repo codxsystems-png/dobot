@@ -9,6 +9,7 @@
 #include "ui/camera_preview_widget.h"
 #include "ui/dialogs/calibration_dialog.h"
 #include "ui/dialogs/gantry_setup_dialog.h"
+#include "ui/dialogs/gantry_tuning_dialog.h"
 #include "services/connection_service.h"
 #include "services/project_service.h"
 #include "services/teach_service.h"
@@ -198,6 +199,7 @@ void MainWindow::createMenuBar()
     robotMenu->addSeparator();
     robotMenu->addAction(tr("&Calibration…"), this, &MainWindow::onCalibration);
     robotMenu->addAction(tr("&Gantry Motor Setup…"), this, &MainWindow::onGantryMotorSetup);
+    robotMenu->addAction(tr("Gantry &PID Tuning…"), this, &MainWindow::onGantryTuning);
     robotMenu->addSeparator();
     robotMenu->addAction(tr("&Emergency Stop"), this, &MainWindow::onEmergencyStop, Qt::Key_F12);
 
@@ -944,6 +946,18 @@ void MainWindow::onEmergencyStop()
     qWarning() << "!!! E-STOP TRIGGERED !!!";
     m_connectionService->emergencyStop();
     m_playbackService->stop();
+
+    // The gantry needs stopping explicitly, not just via PlaybackService:
+    // PlaybackEngine::stop() returns early when playback is already stopped,
+    // and a PID tuning run REQUIRES playback stopped — so E-STOP would
+    // otherwise leave a step test driving the axis.
+    if (m_gantryController) {
+        QMetaObject::invokeMethod(m_gantryController, [this]() {
+            m_gantryController->abortTuning("emergency stop");
+            m_gantryController->stopJog();
+        }, Qt::QueuedConnection);
+    }
+
     m_statusBarWidget->flashEmergency();
 }
 
@@ -1010,6 +1024,12 @@ void MainWindow::onCalibration()
 void MainWindow::onGantryMotorSetup()
 {
     GantrySetupDialog dlg(m_projectService, this);
+    dlg.exec();
+}
+
+void MainWindow::onGantryTuning()
+{
+    GantryTuningDialog dlg(m_projectService, m_gantryController, m_playbackService, this);
     dlg.exec();
 }
 

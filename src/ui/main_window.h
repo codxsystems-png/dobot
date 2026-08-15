@@ -92,6 +92,7 @@ private slots:
 
     void onCalibration();
     void onGantryMotorSetup();
+    void onGantryTuning();
 
 private:
     /// Pushes the project's gantry tuning (encoder calibration, travel limits,

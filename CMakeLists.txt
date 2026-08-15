@@ -117,6 +117,7 @@ list(APPEND UI_SOURCES
     src/ui/diagnostics_panel.cpp
     src/ui/dialogs/calibration_dialog.cpp
     src/ui/dialogs/gantry_setup_dialog.cpp
+    src/ui/dialogs/gantry_tuning_dialog.cpp
     src/ui/widgets/step_response_plot.cpp
 )
 
