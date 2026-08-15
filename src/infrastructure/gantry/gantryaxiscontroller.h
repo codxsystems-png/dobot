@@ -87,12 +87,22 @@ public slots:
     /// stepTelemetry() every tick while running, then stepTestFinished().
     void startStepTest(double stepSizeUnits);
 
+    /// Astrom-Hagglund relay feedback: settles at the midpoint, then drives
+    /// bang-bang at +/- relayAmplitudePwm about it to provoke a limit cycle
+    /// whose period and amplitude give Ku and Tu. Emits stepTelemetry() every
+    /// tick, then autoTuneFinished(); the caller analyses the trace (see
+    /// tuning::analyzeRelayOscillation) rather than the control thread.
+    ///
+    /// Deliberately oscillates real hardware — same preconditions, bounds and
+    /// abort paths as startStepTest().
+    void startAutoTune(double relayAmplitudePwm);
+
     /// Stops any tuning activity immediately: PWM to zero, PID reset, state
     /// back to Idle. Safe to call at any time, including when nothing is
     /// running. Reached by every abort path — user, fault, timeout, limit.
     void abortTuning(const QString& reason);
 
-    bool isTuningActive() const { return m_state == State::StepTest; }
+    bool isTuningActive() const { return m_state == State::StepTest || m_state == State::RelayTune; }
 
 signals:
     /// One per control tick while a tuning run is active (and only then, so
@@ -100,6 +110,10 @@ signals:
     /// fresh encoder reply arrived, so `measured` is a carried-over value.
     void stepTelemetry(double tSec, double setpoint, double measured, int pwm, bool stale);
     void stepTestFinished();
+    /// Relay run completed cleanly; the captured telemetry is ready to analyse.
+    /// Carries back what the relay actually used, so the analysis doesn't have
+    /// to assume the caller's requested values were applied verbatim.
+    void autoTuneFinished(double relayAmplitudePwm, double centreUnits);
     void tuningAborted(const QString& reason);
 
     void connected(const QString& portName);
@@ -122,6 +136,10 @@ private:
     /// One tick of the step-test phase machine. Returns false once the run
     /// has ended (finished or aborted).
     bool serviceStepTest();
+    /// One tick of the relay auto-tune phase machine. Same contract.
+    bool serviceAutoTune();
+    /// Abort checks shared by both tuning runs. Returns false if it aborted.
+    bool checkTuningSafety();
     /// The tracking PID without processClosedLoop()'s State::Tracking guard —
     /// the step test owns the loop while it runs.
     void processClosedLoopForTuning();
@@ -147,15 +165,17 @@ private:
         Homing,
         Jogging,
         Tracking,
-        StepTest
+        StepTest,
+        RelayTune
     };
     State m_state = State::Idle;
 
     // ─── Tuning run state ─────────────────────────────────────────────────
     enum class TunePhase {
         None,
-        Settling,   // driving to the midpoint before the step
-        Stepping,   // the measured portion
+        Settling,   // driving to the midpoint before the step / relay
+        Stepping,   // the measured portion of a step test
+        Relaying,   // bang-bang limit cycle for auto-tune
         Returning   // easing back to the midpoint afterwards
     };
     TunePhase m_tunePhase = TunePhase::None;
@@ -168,6 +188,16 @@ private:
     int    m_tuneSettleTicks = 0;   // consecutive ticks inside tolerance
     int    m_ticksSinceEncoder = 0; // feedback-loss watchdog
     bool   m_tuneSampleStale = false;
+
+    // Relay auto-tune
+    double m_relayAmplitude  = 60.0;  // PWM, the "d" in Ku = 4d/(pi*a)
+    double m_relayHysteresis = 0.0;   // axis units; rejects encoder quantisation chatter
+    int    m_relayOutput     = 0;     // current bang-bang output
+    int    m_tuneTimeoutMs   = 10000; // per-run; auto-tune needs longer than a step
+
+    static constexpr int    RELAY_DURATION_MS      = 15000; // enough for >= 6 cycles
+    static constexpr int    AUTOTUNE_TIMEOUT_MS    = 45000;
+    static constexpr double RELAY_HYSTERESIS_COUNTS = 2.0;  // encoder counts
 
     static constexpr int    TUNE_TIMEOUT_MS        = 10000;
     static constexpr int    TUNE_SETTLE_TICKS      = 15;   // ~300ms inside tolerance

@@ -53,6 +53,8 @@ GantryTuningDialog::GantryTuningDialog(ProjectService* projectService,
                 this, &GantryTuningDialog::onStepTelemetry);
         connect(m_controller, &GantryAxisController::stepTestFinished,
                 this, &GantryTuningDialog::onStepTestFinished);
+        connect(m_controller, &GantryAxisController::autoTuneFinished,
+                this, &GantryTuningDialog::onAutoTuneFinished);
         connect(m_controller, &GantryAxisController::tuningAborted,
                 this, &GantryTuningDialog::onTuningAborted);
         // Losing the axis mid-run must stop everything, not just log.
@@ -127,6 +129,60 @@ void GantryTuningDialog::setupUI()
     testForm->addRow(m_clearBtn);
     left->addWidget(testGroup);
 
+    // ─── Auto-tune ────────────────────────────────────────────────────────
+    auto* autoGroup = new QGroupBox("Auto-Tune (relay feedback)");
+    auto* autoForm  = new QFormLayout(autoGroup);
+
+    m_relayAmplitudeSpin = new QDoubleSpinBox();
+    m_relayAmplitudeSpin->setRange(20.0, 150.0);
+    m_relayAmplitudeSpin->setDecimals(0);
+    m_relayAmplitudeSpin->setValue(60.0);
+    m_relayAmplitudeSpin->setSuffix(" PWM");
+    autoForm->addRow("Relay drive:", m_relayAmplitudeSpin);
+
+    m_tuneRuleCombo = new QComboBox();
+    m_tuneRuleCombo->addItem("Tyreus-Luyben (damped)",
+                             static_cast<int>(tuning::TuneRule::TyreusLuyben));
+    m_tuneRuleCombo->addItem("Ziegler-Nichols (aggressive)",
+                             static_cast<int>(tuning::TuneRule::ZieglerNichols));
+    autoForm->addRow("Rule:", m_tuneRuleCombo);
+
+    auto* autoWarn = new QLabel(
+        "Deliberately oscillates the axis for ~15s to measure its limit cycle.\n"
+        "Bounded about mid-travel; Abort stops it instantly.");
+    autoWarn->setWordWrap(true);
+    autoWarn->setStyleSheet("color: #cc8844; font-size: 10px;");
+    autoForm->addRow("", autoWarn);
+
+    m_autoTuneBtn = new QPushButton("Run Auto-Tune");
+    autoForm->addRow(m_autoTuneBtn);
+    left->addWidget(autoGroup);
+
+    // ─── Proposal (hidden until a run produces one) ───────────────────────
+    m_proposalGroup = new QGroupBox("Proposed Gains");
+    auto* propLayout = new QVBoxLayout(m_proposalGroup);
+    m_proposalMeasured = new QLabel();
+    m_proposalMeasured->setWordWrap(true);
+    m_proposalMeasured->setStyleSheet("color: #999; font-size: 10px;");
+    m_proposalGains = new QLabel();
+    m_proposalGains->setFont(QFont("Consolas", 9));
+    propLayout->addWidget(m_proposalMeasured);
+    propLayout->addWidget(m_proposalGains);
+
+    auto* propButtons = new QHBoxLayout();
+    m_applyProposedBtn = new QPushButton("Apply Proposed");
+    auto* discardBtn   = new QPushButton("Discard");
+    propButtons->addWidget(m_applyProposedBtn);
+    propButtons->addWidget(discardBtn);
+    propLayout->addLayout(propButtons);
+    m_proposalGroup->setVisible(false);
+    left->addWidget(m_proposalGroup);
+
+    connect(m_applyProposedBtn, &QPushButton::clicked,
+            this, &GantryTuningDialog::onApplyProposed);
+    connect(discardBtn, &QPushButton::clicked,
+            this, &GantryTuningDialog::onDiscardProposed);
+
     m_statusLabel = new QLabel();
     m_statusLabel->setWordWrap(true);
     m_statusLabel->setStyleSheet("color: #999; font-size: 10px;");
@@ -194,8 +250,9 @@ void GantryTuningDialog::setupUI()
     connect(m_showPwmCheck, &QCheckBox::toggled, this, [this](bool on) {
         m_plot->setShowPwm(on);
     });
-    connect(m_runBtn,   &QPushButton::clicked, this, &GantryTuningDialog::onRunStepTest);
-    connect(m_abortBtn, &QPushButton::clicked, this, &GantryTuningDialog::onAbort);
+    connect(m_runBtn,      &QPushButton::clicked, this, &GantryTuningDialog::onRunStepTest);
+    connect(m_autoTuneBtn, &QPushButton::clicked, this, &GantryTuningDialog::onRunAutoTune);
+    connect(m_abortBtn,    &QPushButton::clicked, this, &GantryTuningDialog::onAbort);
     connect(m_clearBtn, &QPushButton::clicked, this, [this]() {
         m_capture.clear();
         m_plot->clear();
@@ -228,6 +285,12 @@ void GantryTuningDialog::refreshPreconditions()
     const bool ready = blocker.isEmpty() && !m_running;
     m_runBtn->setEnabled(ready);
     m_runBtn->setToolTip(blocker.isEmpty() ? "" : blocker);
+    // Auto-tune drives the axis harder than a step test, so it gets exactly
+    // the same gate — never a looser one.
+    if (m_autoTuneBtn) {
+        m_autoTuneBtn->setEnabled(ready);
+        m_autoTuneBtn->setToolTip(blocker.isEmpty() ? "" : blocker);
+    }
 
     if (m_running) {
         m_statusLabel->setText("Running — the axis is moving. Abort stops it immediately.");
@@ -276,6 +339,82 @@ void GantryTuningDialog::onRunStepTest()
     QMetaObject::invokeMethod(m_controller, [c = m_controller, step]() {
         c->startStepTest(step);
     }, Qt::QueuedConnection);
+}
+
+void GantryTuningDialog::onRunAutoTune()
+{
+    if (!m_controller) return;
+
+    m_capture.clear();
+    m_plot->clear();
+    m_proposalGroup->setVisible(false);
+    updateMetrics();
+
+    m_running = true;
+    refreshPreconditions();
+
+    const double amplitude = m_relayAmplitudeSpin->value();
+    QMetaObject::invokeMethod(m_controller, [c = m_controller, amplitude]() {
+        c->startAutoTune(amplitude);
+    }, Qt::QueuedConnection);
+}
+
+void GantryTuningDialog::onAutoTuneFinished(double relayAmplitudePwm, double centreUnits)
+{
+    m_running = false;
+    m_plot->setCapturing(false);
+
+    // Analysis runs here, on the UI thread, deliberately — it's a multi-pass
+    // scan over thousands of samples and has no business stalling a 20ms
+    // real-time control loop.
+    auto rule = static_cast<tuning::TuneRule>(m_tuneRuleCombo->currentData().toInt());
+    m_proposal = tuning::analyzeRelayOscillation(m_capture, relayAmplitudePwm,
+                                                  centreUnits, rule);
+
+    refreshPreconditions();
+    updateMetrics();
+
+    if (!m_proposal.ok) {
+        m_proposalGroup->setVisible(false);
+        m_statusLabel->setText("Auto-tune failed: " + m_proposal.message);
+        m_statusLabel->setStyleSheet("color: #ff6666; font-size: 10px;");
+        return;
+    }
+
+    m_proposalMeasured->setText(m_proposal.message);
+    m_proposalGains->setText(
+        QString("        current   proposed\n"
+                "Kp   %1   %2\n"
+                "Ki   %3   %4\n"
+                "Kd   %5   %6")
+            .arg(m_kpSpin->value(), 9, 'f', 4).arg(m_proposal.kp, 9, 'f', 4)
+            .arg(m_kiSpin->value(), 9, 'f', 4).arg(m_proposal.ki, 9, 'f', 4)
+            .arg(m_kdSpin->value(), 9, 'f', 4).arg(m_proposal.kd, 9, 'f', 4));
+    m_proposalGroup->setVisible(true);
+
+    m_statusLabel->setText("Auto-tune complete — review the proposal before applying.");
+    m_statusLabel->setStyleSheet("color: #55cc55; font-size: 10px;");
+}
+
+void GantryTuningDialog::onApplyProposed()
+{
+    if (!m_proposal.ok) return;
+    // Fills the editors only. They push live via the debounce, but the user
+    // still has to press Save Gains to make it project state — a gain derived
+    // from one hardware run shouldn't silently become the saved configuration.
+    m_kpSpin->setValue(m_proposal.kp);
+    m_kiSpin->setValue(m_proposal.ki);
+    m_kdSpin->setValue(m_proposal.kd);
+    m_proposalGroup->setVisible(false);
+    m_statusLabel->setText("Proposed gains applied to the editors — "
+                           "run a step test to check them, then Save Gains.");
+    m_statusLabel->setStyleSheet("color: #999; font-size: 10px;");
+}
+
+void GantryTuningDialog::onDiscardProposed()
+{
+    m_proposal = tuning::RelayResult{};
+    m_proposalGroup->setVisible(false);
 }
 
 void GantryTuningDialog::onAbort()

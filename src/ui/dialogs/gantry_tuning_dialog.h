@@ -12,12 +12,15 @@
 #include <QDialog>
 #include <QDoubleSpinBox>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QPushButton>
+#include <QGroupBox>
 #include <QLabel>
 #include <QTimer>
 #include <QVector>
 #include "core/types.h"
 #include "core/step_response_metrics.h"
+#include "core/relay_tune.h"
 
 class ProjectService;
 class PlaybackService;
@@ -41,9 +44,13 @@ private slots:
     void onGainsEdited();          // debounced; pushes to the controller thread
     void pushGainsNow();
     void onRunStepTest();
+    void onRunAutoTune();
+    void onApplyProposed();
+    void onDiscardProposed();
     void onAbort();
     void onStepTelemetry(double tSec, double setpoint, double measured, int pwm, bool stale);
     void onStepTestFinished();
+    void onAutoTuneFinished(double relayAmplitudePwm, double centreUnits);
     void onTuningAborted(const QString& reason);
     void onAccepted();
     void onRejected();
@@ -69,6 +76,16 @@ private:
     QPushButton*    m_clearBtn = nullptr;
     QPushButton*    m_abortBtn = nullptr;
     QLabel*         m_statusLabel = nullptr;
+
+    // Auto-tune
+    QDoubleSpinBox* m_relayAmplitudeSpin = nullptr;
+    QComboBox*      m_tuneRuleCombo = nullptr;
+    QPushButton*    m_autoTuneBtn   = nullptr;
+    QGroupBox*      m_proposalGroup = nullptr;
+    QLabel*         m_proposalMeasured = nullptr;
+    QLabel*         m_proposalGains    = nullptr;
+    QPushButton*    m_applyProposedBtn = nullptr;
+    tuning::RelayResult m_proposal;
 
     StepResponsePlot* m_plot = nullptr;
     QLabel* m_overshootLabel = nullptr;

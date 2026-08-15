@@ -136,7 +136,7 @@ void GantryAxisController::teardownConnection()
     // Losing the link mid-tuning means no feedback and no way to stop the
     // motor over serial — cancel the run before the port closes, while the
     // explicit "g 0" can still get out.
-    if (m_state == State::StepTest || m_tunePhase != TunePhase::None) {
+    if (m_state == State::StepTest || m_state == State::RelayTune || m_tunePhase != TunePhase::None) {
         abortTuning("connection closed");
     }
 
@@ -192,7 +192,7 @@ void GantryAxisController::stopJog()
     if (!m_connected) return;
     // Also used as the general stop path for Pause/E-STOP, so unconditionally
     // halt the motor and cancel homing/tracking regardless of current state.
-    if (m_state == State::StepTest || m_tunePhase != TunePhase::None) {
+    if (m_state == State::StepTest || m_state == State::RelayTune || m_tunePhase != TunePhase::None) {
         abortTuning("stopped");
         return; // abortTuning already zeroed the motor and reset state
     }
@@ -213,6 +213,11 @@ void GantryAxisController::resetEncoder()
 void GantryAxisController::tick(double targetMm)
 {
     if (!m_connected || !m_isHomed) return;
+
+    // A tuning run owns the control loop. The UI already refuses to start one
+    // while playback is active, but guard here too — two sources commanding
+    // the same axis would corrupt the measurement and could fight mid-motion.
+    if (m_state == State::StepTest || m_state == State::RelayTune) return;
 
     // Runtime safety net — clamp before the target ever reaches the closed
     // loop, regardless of whether the caller already validated it upstream.
@@ -284,9 +289,133 @@ void GantryAxisController::startStepTest(double stepSizeUnits)
             .arg(m_tuneMargin, 0, 'f', 1));
 }
 
+void GantryAxisController::startAutoTune(double relayAmplitudePwm)
+{
+    if (!m_connected) {
+        emit errorOccurred("Auto-tune needs the axis connected.");
+        return;
+    }
+    if (!m_isHomed) {
+        emit errorOccurred("Auto-tune needs the axis homed — without a known "
+                           "origin, position and travel limits are meaningless.");
+        return;
+    }
+
+    double span = m_travelLimits.maxMm - m_travelLimits.minMm;
+    if (span <= 0.0) {
+        emit errorOccurred("Auto-tune needs a configured travel range.");
+        return;
+    }
+
+    m_relayAmplitude = std::clamp(std::abs(relayAmplitudePwm), 1.0,
+                                   static_cast<double>(MAX_PWM));
+    // Two encoder counts' worth: enough to reject quantisation chatter at the
+    // switching point without smothering a genuinely small limit cycle.
+    m_relayHysteresis = RELAY_HYSTERESIS_COUNTS / m_countsPerMm;
+    m_relayOutput = 0;
+
+    m_tuneCentre = (m_travelLimits.minMm + m_travelLimits.maxMm) / 2.0;
+    m_tuneMargin = span * TUNE_MARGIN_FRACTION;
+    // The relay has no commanded excursion of its own, so bound the runaway
+    // check against a quarter of the usable span.
+    m_tuneStepSize = span * 0.25;
+    m_tuneTimeoutMs = AUTOTUNE_TIMEOUT_MS;
+
+    m_tuneSettleTicks   = 0;
+    m_ticksSinceEncoder = 0;
+    m_tunePhase = TunePhase::Settling;
+    m_state     = State::RelayTune;
+
+    m_pid.reset();
+    m_pidClockValid = false;
+    m_targetPositionMm = m_tuneCentre;
+    m_tuneElapsed.restart();
+    m_tuneCapture.restart();
+
+    StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+        "GantryAxisController",
+        QString("Auto-tune starting: centre %1, relay +/-%2 PWM, hysteresis %3")
+            .arg(m_tuneCentre, 0, 'f', 1)
+            .arg(m_relayAmplitude, 0, 'f', 0)
+            .arg(m_relayHysteresis, 0, 'f', 4));
+}
+
+// One tick of the relay auto-tune. Settles at the centre under PID, then
+// switches to open-loop bang-bang to provoke a limit cycle.
+bool GantryAxisController::serviceAutoTune()
+{
+    if (!checkTuningSafety()) return false;
+
+    switch (m_tunePhase) {
+    case TunePhase::Settling:
+        m_targetPositionMm = m_tuneCentre;
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+            if (++m_tuneSettleTicks >= TUNE_SETTLE_TICKS) {
+                m_tunePhase = TunePhase::Relaying;
+                m_tuneCapture.restart();  // t = 0 at the start of the limit cycle
+            }
+        } else {
+            m_tuneSettleTicks = 0;
+        }
+        processClosedLoopForTuning();
+        break;
+
+    case TunePhase::Relaying: {
+        if (m_tuneCapture.elapsed() > RELAY_DURATION_MS) {
+            m_tunePhase = TunePhase::Returning;
+            m_pid.reset();          // PID takes over again for the return
+            m_pidClockValid = false;
+            m_targetPositionMm = m_tuneCentre;
+            break;
+        }
+        // Bang-bang with hysteresis. Deliberately NOT through the PID or the
+        // ramp limiter — the describing-function result Ku = 4d/(pi*a)
+        // assumes an ideal relay, so any smoothing here would corrupt it.
+        double error = m_tuneCentre - m_currentPositionMm;
+        if (error > m_relayHysteresis) {
+            m_relayOutput = static_cast<int>(m_relayAmplitude);
+        } else if (error < -m_relayHysteresis) {
+            m_relayOutput = -static_cast<int>(m_relayAmplitude);
+        }
+        // Re-sent every tick so the firmware's 500ms watchdog never trips
+        // mid-oscillation and silently corrupts the measurement.
+        setMotorPwm(m_relayOutput);
+        m_targetPositionMm = m_tuneCentre;
+        break;
+    }
+
+    case TunePhase::Returning:
+        m_targetPositionMm = m_tuneCentre;
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+            setMotorPwm(0);
+            double amplitude = m_relayAmplitude;
+            double centre    = m_tuneCentre;
+            m_tunePhase = TunePhase::None;
+            m_state     = State::Idle;
+            StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+                "GantryAxisController", "Auto-tune relay run finished");
+            emit autoTuneFinished(amplitude, centre);
+            return false;
+        }
+        processClosedLoopForTuning();
+        break;
+
+    case TunePhase::Stepping:
+    case TunePhase::None:
+        return false;
+    }
+
+    emit stepTelemetry(m_tuneCapture.elapsed() / 1000.0,
+                       m_tuneCentre,
+                       m_currentPositionMm,
+                       m_currentPwm,
+                       m_tuneSampleStale);
+    return true;
+}
+
 void GantryAxisController::abortTuning(const QString& reason)
 {
-    if (m_state != State::StepTest && m_tunePhase == TunePhase::None) {
+    if (m_state != State::StepTest && m_state != State::RelayTune && m_tunePhase == TunePhase::None) {
         // Nothing running — still force PWM low, since this is the panic path
         // and being certain costs one serial write.
         if (m_connected) setMotorPwm(0);
@@ -304,12 +433,11 @@ void GantryAxisController::abortTuning(const QString& reason)
     emit tuningAborted(reason);
 }
 
-// Runs once per control tick while a step test is active. Returns false if
-// the run ended (finished or aborted) so the caller can stop driving it.
-bool GantryAxisController::serviceStepTest()
+// Hard aborts shared by both tuning runs, checked before anything drives the
+// motor. Returns false if it aborted.
+bool GantryAxisController::checkTuningSafety()
 {
-    // ─── Hard aborts, checked before anything else drives the motor ───────
-    if (m_tuneElapsed.elapsed() > TUNE_TIMEOUT_MS) {
+    if (m_tuneElapsed.elapsed() > m_tuneTimeoutMs) {
         abortTuning("timed out");
         return false;
     }
@@ -329,6 +457,14 @@ bool GantryAxisController::serviceStepTest()
         abortTuning("lost encoder feedback — the loop would be flying blind");
         return false;
     }
+    return true;
+}
+
+// Runs once per control tick while a step test is active. Returns false if
+// the run ended (finished or aborted) so the caller can stop driving it.
+bool GantryAxisController::serviceStepTest()
+{
+    if (!checkTuningSafety()) return false;
 
     // ─── Phase machine ────────────────────────────────────────────────────
     switch (m_tunePhase) {
@@ -366,6 +502,7 @@ bool GantryAxisController::serviceStepTest()
         }
         break;
 
+    case TunePhase::Relaying:
     case TunePhase::None:
         return false;
     }
@@ -458,16 +595,20 @@ void GantryAxisController::heartbeat()
         break;
 
     case State::StepTest:
+    case State::RelayTune: {
         // Feedback-loss watchdog: reset in handleResponse() on a real reading.
         ++m_ticksSinceEncoder;
         m_tuneSampleStale = (m_ticksSinceEncoder > 1);
-        if (!serviceStepTest()) return; // run ended (finished or aborted)
+        bool stillRunning = (m_state == State::StepTest) ? serviceStepTest()
+                                                          : serviceAutoTune();
+        if (!stillRunning) return; // run ended (finished or aborted)
         if (m_pendingQuery == PendingQuery::None) {
             sendCommand("e");
             m_pendingQuery = PendingQuery::Encoder;
             m_pendingTicks = 0;
         }
         break;
+    }
 
     case State::Idle:
     case State::Tracking:
