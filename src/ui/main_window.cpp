@@ -320,6 +320,11 @@ void MainWindow::createCentralLayout()
         });
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 m_segmentsModel, &SegmentsModel::setGantryMotorSpec);
+        // Axis type drives the units shown on the jog readout (mm vs degrees).
+        connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
+                this, [this](const GantryMotorSpec& spec) {
+                    if (m_teachPanel) m_teachPanel->setAxisUnitLabel(motion::unitLabel(spec));
+                });
         // Encoder calibration / travel limits / PID gains only take effect if
         // they're actually pushed to the controller thread — before this they
         // were persisted but never applied, leaving m_countsPerMm hardcoded.
@@ -640,6 +645,12 @@ void MainWindow::createConnections()
             m_gantryController, &GantryAxisController::homeGantry);
     connect(m_gantryController, &GantryAxisController::positionChanged,
             m_teachPanel, &TeachPanel::updateGantryPosition);
+    // Seed the readout's units from the loaded project (the change signal
+    // only fires on edits, and the panel didn't exist when that was wired).
+    if (m_projectService && m_teachPanel) {
+        m_teachPanel->setAxisUnitLabel(
+            motion::unitLabel(m_projectService->project().gantryMotorSpec));
+    }
     connect(m_gantryController, &GantryAxisController::connected,
             this, [this]() { m_teachPanel->setGantryConnected(true); });
     connect(m_gantryController, &GantryAxisController::disconnected,

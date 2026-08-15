@@ -23,6 +23,11 @@ public:
 public slots:
     void updateGantryPosition(double posMm);
 
+    /// Unit label for the external axis readout ("mm" or "deg"). Pushed by
+    /// MainWindow when the axis type changes — TeachPanel has no
+    /// ProjectService of its own.
+    void setAxisUnitLabel(const QString& label);
+
 signals:
     /// Connect button clicked — wire to ConnectionService::connectToRobot
     void connectRequested();
@@ -88,6 +93,8 @@ private:
     QComboBox*    m_gantryPortCombo  = nullptr;
     QPushButton*  m_gantryHomeBtn   = nullptr;
     QLabel*       m_gantryPosLabel  = nullptr;
+    QString       m_axisUnitLabel   = "mm";
+    double        m_lastGantryPos   = 0.0;
     QPushButton*  m_gantryJogNeg    = nullptr;
     QPushButton*  m_gantryJogPos    = nullptr;
     QComboBox*    m_gantrySpeedCombo = nullptr;

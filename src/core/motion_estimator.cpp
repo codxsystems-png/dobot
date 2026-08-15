@@ -4,11 +4,34 @@
 
 namespace motion {
 
-double deriveMaxGantryVelocityMmPerSec(const GantryMotorSpec& spec)
+double deriveMaxGantryVelocityUnitsPerSec(const GantryMotorSpec& spec)
 {
     if (spec.gearRatio <= 0.0) return 0.0;
     double outputRpm = spec.motorRpm / spec.gearRatio;
-    return outputRpm * spec.mmPerRev / 60.0;
+    // Rotary axes have no leadscrew/pulley — one output revolution is simply
+    // 360 degrees, so mmPerRev doesn't participate.
+    double unitsPerRev = (spec.axisType == GantryAxisType::Rotary) ? 360.0 : spec.mmPerRev;
+    return outputRpm * unitsPerRev / 60.0;
+}
+
+QString unitSuffix(const GantryMotorSpec& spec)
+{
+    return spec.axisType == GantryAxisType::Rotary ? QStringLiteral("°") : QStringLiteral(" mm");
+}
+
+QString unitLabel(const GantryMotorSpec& spec)
+{
+    return spec.axisType == GantryAxisType::Rotary ? QStringLiteral("deg") : QStringLiteral("mm");
+}
+
+QString velocityLabel(const GantryMotorSpec& spec)
+{
+    return spec.axisType == GantryAxisType::Rotary ? QStringLiteral("°/s") : QStringLiteral("mm/s");
+}
+
+QString accelLabel(const GantryMotorSpec& spec)
+{
+    return spec.axisType == GantryAxisType::Rotary ? QStringLiteral("°/s²") : QStringLiteral("mm/s²");
 }
 
 double minGantryDurationSec(const CameraPoint& fromPt, const CameraPoint& toPt,
@@ -16,7 +39,7 @@ double minGantryDurationSec(const CameraPoint& fromPt, const CameraPoint& toPt,
 {
     if (!spec.configured) return fallbackSec;
 
-    double vMax = deriveMaxGantryVelocityMmPerSec(spec);
+    double vMax = deriveMaxGantryVelocityUnitsPerSec(spec);
     if (vMax <= 0.0) return fallbackSec; // invalid spec — don't block the user
 
     double aMax = spec.maxAccelMmPerSec2 > 0.0 ? spec.maxAccelMmPerSec2 : 1.0;

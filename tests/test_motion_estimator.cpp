@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// Test: motion::deriveMaxGantryVelocityMmPerSec / minGantryDurationSec
+// Test: motion::deriveMaxGantryVelocityUnitsPerSec / minGantryDurationSec
 // Pins the RPM/gear-ratio/mm-per-rev conversion formula and the fallback
 // behavior an unconfigured or invalid GantryMotorSpec must produce.
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -19,17 +19,40 @@ private slots:
         spec.gearRatio = 10.0;
         spec.mmPerRev = 5.0;
         // outputRpm = 3000/10 = 300; maxVel = 300*5/60 = 25.0 mm/s
-        QCOMPARE(motion::deriveMaxGantryVelocityMmPerSec(spec), 25.0);
+        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 25.0);
+    }
+
+    void testDeriveVelocity_RotaryUses360DegreesPerRevIgnoringMmPerRev()
+    {
+        GantryMotorSpec spec;
+        spec.motorRpm = 600.0;
+        spec.gearRatio = 10.0;
+        spec.mmPerRev = 999.0;  // must be ignored entirely in Rotary mode
+        spec.axisType = GantryAxisType::Rotary;
+        // outputRpm = 600/10 = 60 rev/min = 1 rev/s = 360 deg/s
+        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 360.0);
+    }
+
+    void testUnitLabelsFollowAxisType()
+    {
+        GantryMotorSpec linear;   // Linear is the default
+        QCOMPARE(motion::unitLabel(linear), QStringLiteral("mm"));
+        QCOMPARE(motion::velocityLabel(linear), QStringLiteral("mm/s"));
+
+        GantryMotorSpec rotary;
+        rotary.axisType = GantryAxisType::Rotary;
+        QCOMPARE(motion::unitLabel(rotary), QStringLiteral("deg"));
+        QCOMPARE(motion::velocityLabel(rotary), QStringLiteral("°/s"));
     }
 
     void testDeriveVelocity_ZeroOrNegativeGearRatioReturnsZero()
     {
         GantryMotorSpec spec;
         spec.gearRatio = 0.0;
-        QCOMPARE(motion::deriveMaxGantryVelocityMmPerSec(spec), 0.0);
+        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 0.0);
 
         spec.gearRatio = -1.0;
-        QCOMPARE(motion::deriveMaxGantryVelocityMmPerSec(spec), 0.0);
+        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 0.0);
     }
 
     void testMinGantryDuration_UnconfiguredSpecReturnsFallback()

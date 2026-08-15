@@ -28,7 +28,7 @@ std::shared_ptr<Timeline> TimelineCompiler::compile(SegmentsModel* segments,
         // actually configured a real motor spec — otherwise leave it alone
         // so unconfigured projects (old or new) behave exactly as before.
         if (motorSpec && motorSpec->configured) {
-            double vMax = motion::deriveMaxGantryVelocityMmPerSec(*motorSpec);
+            double vMax = motion::deriveMaxGantryVelocityUnitsPerSec(*motorSpec);
             if (vMax > 0.0) {
                 gantryTrack->setLimits(vMax, motorSpec->maxAccelMmPerSec2);
             }

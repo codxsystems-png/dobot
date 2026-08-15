@@ -371,7 +371,15 @@ void TeachPanel::setGantryConnected(bool connected)
 
 void TeachPanel::updateGantryPosition(double posMm)
 {
+    m_lastGantryPos = posMm;
     if (m_gantryPosLabel) {
-        m_gantryPosLabel->setText(QString("[ %1 mm ]").arg(posMm, 0, 'f', 1));
+        m_gantryPosLabel->setText(
+            QString("[ %1 %2 ]").arg(posMm, 0, 'f', 1).arg(m_axisUnitLabel));
     }
+}
+
+void TeachPanel::setAxisUnitLabel(const QString& label)
+{
+    m_axisUnitLabel = label;
+    updateGantryPosition(m_lastGantryPos); // repaint with the new unit
 }
