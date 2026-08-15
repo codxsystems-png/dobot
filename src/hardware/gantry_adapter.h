@@ -22,6 +22,10 @@ public:
         return m_controller && m_controller->isConnected() && m_controller->isHomed();
     }
 
+    bool isConnected() const override {
+        return m_controller && m_controller->isConnected();
+    }
+
     void enqueueMoveCommand(const QVariant& target, double /*expectedDurationSec*/) override {
         if (!m_controller || !m_controller->isConnected()) return;
 

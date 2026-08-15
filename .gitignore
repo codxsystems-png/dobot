@@ -1,0 +1,11 @@
+# Added by code-review-graph
+.code-review-graph/
+
+# Build output
+build/
+
+# Logs
+*.log
+aqtinstall.log
+error.log
+output.log

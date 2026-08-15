@@ -1,0 +1,134 @@
+/***************************************************************
+ * CamBotTimeline — Gantry Axis Firmware
+ *
+ * Closed-loop DC motor position control for a single linear
+ * gantry axis. The Qt-side GantryAxisController drives this over
+ * serial with signed PWM and reads back encoder counts; homing
+ * is done here against a physical limit switch.
+ *
+ * Wiring:
+ *   Motor  PWM = pin 5, DIR = pin 4   (H-bridge Channel A)
+ *   Encoder A  = pin 2 (INT0)
+ *   Encoder B  = pin 3 (INT1)
+ *   Home limit switch = pin 8 (to GND, internal pullup)
+ *
+ * Serial protocol (9600 baud, commands terminated by '\n'):
+ *   g <pwm>   set gantry PWM, signed, -255 to 255
+ *   e         returns current encoder count
+ *   r         resets encoder count to 0
+ *   h         returns 1 if home switch triggered, else 0
+ *   p         ping, returns OK
+ ***************************************************************/
+
+const uint8_t PIN_MOTOR_PWM   = 5;
+const uint8_t PIN_MOTOR_DIR   = 4;
+const uint8_t PIN_ENCODER_A   = 2;
+const uint8_t PIN_ENCODER_B   = 3;
+const uint8_t PIN_HOME_SWITCH = 8;
+
+const int MAX_PWM = 255;
+
+// If the host stops sending 'g' commands mid-motion (USB drop, app crash),
+// stop driving instead of running away.
+const unsigned long MOTOR_WATCHDOG_MS = 500;
+
+volatile long encoderCount = 0;
+volatile uint8_t lastEncoded = 0;
+
+unsigned long lastMotorCommandMs = 0;
+String inputLine;
+
+void encoderISR()
+{
+  uint8_t a = digitalRead(PIN_ENCODER_A);
+  uint8_t b = digitalRead(PIN_ENCODER_B);
+  uint8_t encoded = (a << 1) | b;
+  uint8_t sum = (lastEncoded << 2) | encoded;
+
+  if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) encoderCount++;
+  if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) encoderCount--;
+
+  lastEncoded = encoded;
+}
+
+// ASSUMPTION: verify against hardware — positive PWM should drive the
+// gantry toward increasing position; swap the DIR polarity below if reversed.
+void setMotorPwm(int pwm)
+{
+  pwm = constrain(pwm, -MAX_PWM, MAX_PWM);
+  digitalWrite(PIN_MOTOR_DIR, pwm >= 0 ? HIGH : LOW);
+  analogWrite(PIN_MOTOR_PWM, abs(pwm));
+}
+
+void setup()
+{
+  Serial.begin(9600);
+
+  pinMode(PIN_MOTOR_PWM, OUTPUT);
+  pinMode(PIN_MOTOR_DIR, OUTPUT);
+  pinMode(PIN_ENCODER_A, INPUT_PULLUP);
+  pinMode(PIN_ENCODER_B, INPUT_PULLUP);
+  pinMode(PIN_HOME_SWITCH, INPUT_PULLUP);
+
+  lastEncoded = (digitalRead(PIN_ENCODER_A) << 1) | digitalRead(PIN_ENCODER_B);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_A), encoderISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_B), encoderISR, CHANGE);
+
+  setMotorPwm(0);
+  lastMotorCommandMs = millis();
+  inputLine.reserve(16);
+}
+
+void handleCommand(const String& line)
+{
+  if (line.length() == 0) return;
+
+  switch (line[0]) {
+    case 'g': {
+      setMotorPwm(line.substring(1).toInt());
+      lastMotorCommandMs = millis();
+      break;
+    }
+    case 'e': {
+      noInterrupts();
+      long count = encoderCount;
+      interrupts();
+      Serial.println(count);
+      break;
+    }
+    case 'r': {
+      noInterrupts();
+      encoderCount = 0;
+      interrupts();
+      break;
+    }
+    case 'h': {
+      bool pressed = (digitalRead(PIN_HOME_SWITCH) == LOW);
+      Serial.println(pressed ? 1 : 0);
+      break;
+    }
+    case 'p': {
+      Serial.println("OK");
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+void loop()
+{
+  if (millis() - lastMotorCommandMs > MOTOR_WATCHDOG_MS) {
+    setMotorPwm(0);
+  }
+
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n') {
+      handleCommand(inputLine);
+      inputLine = "";
+    } else if (c != '\r') {
+      inputLine += c;
+    }
+  }
+}
