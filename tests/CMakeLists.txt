@@ -64,6 +64,12 @@ target_sources(test_motion_estimator PRIVATE
     ${CMAKE_SOURCE_DIR}/src/math/motion_profile.cpp
 )
 
+# Test: Step Response Metrics (PID tuning: overshoot / settling / rise time)
+add_cambot_test(test_step_response_metrics test_step_response_metrics.cpp)
+target_sources(test_step_response_metrics PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core/step_response_metrics.cpp
+)
+
 # Test: PID Controller (gantry closed-loop upgrade)
 add_cambot_test(test_pid_controller test_pid_controller.cpp)
 

@@ -48,6 +48,7 @@ set(CORE_SOURCES
     src/core/byte_stream_buffer.cpp
     src/core/structured_logger.cpp
     src/core/motion_estimator.cpp
+    src/core/step_response_metrics.cpp
 )
 
 set(NETWORK_SOURCES
