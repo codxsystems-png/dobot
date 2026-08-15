@@ -270,6 +270,9 @@ void GantryAxisController::startStepTest(double stepSizeUnits)
     m_tuneCentre   = (m_travelLimits.minMm + m_travelLimits.maxMm) / 2.0;
     m_tuneStepSize = stepSizeUnits;
     m_tuneMargin   = span * TUNE_MARGIN_FRACTION;
+    m_tuneTimeoutMs = TUNE_TIMEOUT_MS;
+    // A step test needs a genuinely stable baseline to measure against.
+    m_settleTolerance = TUNE_SETTLE_TOLERANCE;
     m_tuneSettleTicks   = 0;
     m_ticksSinceEncoder = 0;
     m_tunePhase = TunePhase::Settling;
@@ -320,6 +323,7 @@ void GantryAxisController::startAutoTune(double relayAmplitudePwm)
     // check against a quarter of the usable span.
     m_tuneStepSize = span * 0.25;
     m_tuneTimeoutMs = AUTOTUNE_TIMEOUT_MS;
+    m_settleTolerance = std::max(RELAY_SETTLE_FLOOR, span * RELAY_SETTLE_FRACTION);
 
     m_tuneSettleTicks   = 0;
     m_ticksSinceEncoder = 0;
@@ -349,7 +353,7 @@ bool GantryAxisController::serviceAutoTune()
     switch (m_tunePhase) {
     case TunePhase::Settling:
         m_targetPositionMm = m_tuneCentre;
-        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < m_settleTolerance) {
             if (++m_tuneSettleTicks >= TUNE_SETTLE_TICKS) {
                 m_tunePhase = TunePhase::Relaying;
                 m_tuneCapture.restart();  // t = 0 at the start of the limit cycle
@@ -386,7 +390,7 @@ bool GantryAxisController::serviceAutoTune()
 
     case TunePhase::Returning:
         m_targetPositionMm = m_tuneCentre;
-        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < m_settleTolerance) {
             setMotorPwm(0);
             double amplitude = m_relayAmplitude;
             double centre    = m_tuneCentre;
@@ -457,6 +461,20 @@ bool GantryAxisController::checkTuningSafety()
         abortTuning("lost encoder feedback — the loop would be flying blind");
         return false;
     }
+
+    // Failing to reach the midpoint is a distinct problem from a run that
+    // started fine and went wrong later, so it gets its own (much shorter)
+    // deadline and an explanation that names the usual cause. Settling is
+    // always the first phase, so run-elapsed is the right clock here.
+    if (m_tunePhase == TunePhase::Settling && m_tuneElapsed.elapsed() > SETTLE_TIMEOUT_MS) {
+        abortTuning(QString("could not settle at the midpoint (%1) within %2s — stopped "
+                            "%3 away. The current gains are probably too weak to overcome "
+                            "friction; try raising Kp.")
+                        .arg(m_tuneCentre, 0, 'f', 1)
+                        .arg(SETTLE_TIMEOUT_MS / 1000)
+                        .arg(std::abs(m_currentPositionMm - m_tuneCentre), 0, 'f', 1));
+        return false;
+    }
     return true;
 }
 
@@ -470,7 +488,7 @@ bool GantryAxisController::serviceStepTest()
     switch (m_tunePhase) {
     case TunePhase::Settling:
         m_targetPositionMm = m_tuneCentre;
-        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < m_settleTolerance) {
             if (++m_tuneSettleTicks >= TUNE_SETTLE_TICKS) {
                 m_tunePhase = TunePhase::Stepping;
                 m_targetPositionMm = m_tuneCentre + m_tuneStepSize;
@@ -491,7 +509,7 @@ bool GantryAxisController::serviceStepTest()
 
     case TunePhase::Returning:
         m_targetPositionMm = m_tuneCentre;
-        if (std::abs(m_currentPositionMm - m_tuneCentre) < TUNE_SETTLE_TOLERANCE) {
+        if (std::abs(m_currentPositionMm - m_tuneCentre) < m_settleTolerance) {
             setMotorPwm(0);
             m_tunePhase = TunePhase::None;
             m_state     = State::Idle;

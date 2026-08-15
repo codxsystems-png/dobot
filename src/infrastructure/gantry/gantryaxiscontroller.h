@@ -201,7 +201,19 @@ private:
 
     static constexpr int    TUNE_TIMEOUT_MS        = 10000;
     static constexpr int    TUNE_SETTLE_TICKS      = 15;   // ~300ms inside tolerance
-    static constexpr double TUNE_SETTLE_TOLERANCE  = 1.0;  // axis units
+    static constexpr double TUNE_SETTLE_TOLERANCE  = 1.0;  // axis units, step test
+    // Auto-tune doesn't need a precise start: the relay oscillates about the
+    // centre wherever it begins, and the first two cycles are discarded as
+    // transient anyway. Insisting on the step test's tolerance just means weak
+    // gains can block the very run that would fix them.
+    static constexpr double RELAY_SETTLE_FRACTION  = 0.02; // of travel span
+    static constexpr double RELAY_SETTLE_FLOOR     = 5.0;  // axis units
+    /// Settling is always the first phase, so this is measured from run start.
+    /// Far shorter than the run timeout — failing to settle is a distinct
+    /// problem from a run that started fine and went wrong later.
+    static constexpr int    SETTLE_TIMEOUT_MS      = 8000;
+
+    double m_settleTolerance = TUNE_SETTLE_TOLERANCE; // set per run
     static constexpr int    TUNE_FEEDBACK_LOSS_TICKS = 10; // 200ms with no encoder
     static constexpr double TUNE_RUNAWAY_FACTOR    = 2.5;  // x excursion from centre
     static constexpr double TUNE_MARGIN_FRACTION   = 0.10; // of total travel span
