@@ -151,6 +151,15 @@ void ProjectService::setGantryMotorSpec(const GantryMotorSpec& spec)
     emit gantryMotorSpecChanged(spec);
 }
 
+void ProjectService::setGantryTuning(const GantryTuning& tuning)
+{
+    m_project.gantryTuning = tuning;
+    // Keep the legacy mirror in step so a save right now stays consistent.
+    m_project.gantryEncoderCountsPerMm = tuning.countsPerUnit;
+    setDirty(true);
+    emit gantryTuningChanged(tuning);
+}
+
 // ─── JSON Serialization ─────────────────────────────────────────────────────────
 
 QJsonObject ProjectService::projectToJson() const
@@ -224,14 +233,28 @@ QJsonObject ProjectService::projectToJson() const
     obj["fizKeyframes"] = fizArray;
 
     // Gantry
-    obj["gantryEncoderCountsPerMm"] = m_project.gantryEncoderCountsPerMm;
+    // Legacy key is mirrored from the live tuning value so an older build
+    // reading this file still sees a sane counts/mm rather than a stale one.
+    obj["gantryEncoderCountsPerMm"] = m_project.gantryTuning.countsPerUnit;
     QJsonObject motorSpec;
     motorSpec["motorRpm"]          = m_project.gantryMotorSpec.motorRpm;
     motorSpec["gearRatio"]         = m_project.gantryMotorSpec.gearRatio;
     motorSpec["mmPerRev"]          = m_project.gantryMotorSpec.mmPerRev;
     motorSpec["maxAccelMmPerSec2"] = m_project.gantryMotorSpec.maxAccelMmPerSec2;
     motorSpec["configured"]        = m_project.gantryMotorSpec.configured;
+    motorSpec["axisType"]          = static_cast<int>(m_project.gantryMotorSpec.axisType);
     obj["gantryMotorSpec"] = motorSpec;
+
+    QJsonObject tuning;
+    tuning["countsPerUnit"]  = m_project.gantryTuning.countsPerUnit;
+    tuning["travelMin"]      = m_project.gantryTuning.travelLimits.minMm;
+    tuning["travelMax"]      = m_project.gantryTuning.travelLimits.maxMm;
+    tuning["pwmRampPerTick"] = m_project.gantryTuning.pwmRampPerTick;
+    tuning["pidKp"]          = m_project.gantryTuning.pidKp;
+    tuning["pidKi"]          = m_project.gantryTuning.pidKi;
+    tuning["pidKd"]          = m_project.gantryTuning.pidKd;
+    tuning["configured"]     = m_project.gantryTuning.configured;
+    obj["gantryTuning"] = tuning;
     QJsonArray gantryArray;
     for (const auto& kf : m_project.gantryKeyframes) {
         QJsonObject kfObj;
@@ -319,7 +342,8 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
     }
 
     // Gantry
-    m_project.gantryEncoderCountsPerMm = obj["gantryEncoderCountsPerMm"].toDouble(100.0);
+    double legacyCounts = obj["gantryEncoderCountsPerMm"].toDouble(100.0);
+    m_project.gantryEncoderCountsPerMm = legacyCounts; // keep the frozen field populated
     if (obj.contains("gantryMotorSpec")) {
         QJsonObject motorSpec = obj["gantryMotorSpec"].toObject();
         m_project.gantryMotorSpec.motorRpm          = motorSpec["motorRpm"].toDouble(3000.0);
@@ -327,8 +351,27 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
         m_project.gantryMotorSpec.mmPerRev          = motorSpec["mmPerRev"].toDouble(4.0);
         m_project.gantryMotorSpec.maxAccelMmPerSec2 = motorSpec["maxAccelMmPerSec2"].toDouble(400.0);
         m_project.gantryMotorSpec.configured        = motorSpec["configured"].toBool(false);
+        m_project.gantryMotorSpec.axisType =
+            static_cast<GantryAxisType>(motorSpec["axisType"].toInt(0)); // 0 == Linear
     } else {
         m_project.gantryMotorSpec = GantryMotorSpec(); // old project file — behave exactly as before
+    }
+
+    if (obj.contains("gantryTuning")) {
+        QJsonObject tuning = obj["gantryTuning"].toObject();
+        m_project.gantryTuning.countsPerUnit      = tuning["countsPerUnit"].toDouble(legacyCounts);
+        m_project.gantryTuning.travelLimits.minMm = tuning["travelMin"].toDouble(0.0);
+        m_project.gantryTuning.travelLimits.maxMm = tuning["travelMax"].toDouble(1000.0);
+        m_project.gantryTuning.pwmRampPerTick     = tuning["pwmRampPerTick"].toInt(15);
+        m_project.gantryTuning.pidKp              = tuning["pidKp"].toDouble(0.8);
+        m_project.gantryTuning.pidKi              = tuning["pidKi"].toDouble(0.1);
+        m_project.gantryTuning.pidKd              = tuning["pidKd"].toDouble(0.05);
+        m_project.gantryTuning.configured         = tuning["configured"].toBool(false);
+    } else {
+        // Project predates the tuning block — take defaults, but migrate the
+        // legacy counts/mm so an existing calibration isn't silently lost.
+        m_project.gantryTuning = GantryTuning();
+        m_project.gantryTuning.countsPerUnit = legacyCounts;
     }
     if (obj.contains("gantryKeyframes")) {
         QJsonArray gantryArray = obj["gantryKeyframes"].toArray();

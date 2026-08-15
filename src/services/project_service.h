@@ -36,6 +36,10 @@ public slots:
     /// auto-compute feasible segment trigger times.
     void setGantryMotorSpec(const GantryMotorSpec& spec);
 
+    /// Update the external axis's closed-loop configuration (encoder
+    /// calibration, travel limits, PWM ramp, PID gains).
+    void setGantryTuning(const GantryTuning& tuning);
+
     /// Save to current path (or prompt if new)
     bool saveProject();
 
@@ -55,6 +59,7 @@ signals:
     void dirtyChanged(bool dirty);
     void errorOccurred(const QString& error);
     void gantryMotorSpecChanged(const GantryMotorSpec& spec);
+    void gantryTuningChanged(const GantryTuning& tuning);
 
 private:
     QJsonObject projectToJson() const;

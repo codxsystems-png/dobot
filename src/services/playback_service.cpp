@@ -77,8 +77,10 @@ void PlaybackService::compileAndLoadTimeline()
     if (!m_engine) return;
 
     // Convert old UI models to MRMC Timeline
-    const GantryMotorSpec* spec = m_projectService ? &m_projectService->project().gantryMotorSpec : nullptr;
-    auto timeline = timeline::TimelineCompiler::compile(m_segModel, m_ptModel, m_gantryService, m_fizService, spec);
+    const GantryMotorSpec* spec   = m_projectService ? &m_projectService->project().gantryMotorSpec : nullptr;
+    const GantryTuning*    tuning = m_projectService ? &m_projectService->project().gantryTuning    : nullptr;
+    auto timeline = timeline::TimelineCompiler::compile(m_segModel, m_ptModel, m_gantryService,
+                                                        m_fizService, spec, tuning);
     m_engine->setTimeline(timeline);
     // playbackCompleted() previously never fired because the engine had no
     // notion of "the end" — wire it to the same duration the timeline UI

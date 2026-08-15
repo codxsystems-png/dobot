@@ -92,6 +92,14 @@ private slots:
 
     void onCalibration();
     void onGantryMotorSetup();
+
+private:
+    /// Pushes the project's gantry tuning (encoder calibration, travel limits,
+    /// PWM ramp, PID gains) onto the controller's thread. Called at startup,
+    /// on project load, and whenever the tuning changes.
+    void pushGantryTuning();
+
+private slots:
     void onDiagnostics();
 
 private:

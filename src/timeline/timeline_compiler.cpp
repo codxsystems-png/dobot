@@ -13,7 +13,8 @@ std::shared_ptr<Timeline> TimelineCompiler::compile(SegmentsModel* segments,
                                                     PointsModel* points,
                                                     GantryService* gantry,
                                                     FizService* fiz,
-                                                    const GantryMotorSpec* motorSpec)
+                                                    const GantryMotorSpec* motorSpec,
+                                                    const GantryTuning* tuning)
 {
     auto timeline = std::make_shared<Timeline>();
 
@@ -31,6 +32,12 @@ std::shared_ptr<Timeline> TimelineCompiler::compile(SegmentsModel* segments,
             if (vMax > 0.0) {
                 gantryTrack->setLimits(vMax, motorSpec->maxAccelMmPerSec2);
             }
+        }
+
+        // Travel range, so an out-of-reach keyframe is rejected by preflight
+        // rather than only being clamped at runtime by the controller.
+        if (tuning && tuning->configured) {
+            gantryTrack->setRangeLimits(tuning->travelLimits);
         }
 
         for (int i = 0; i < segments->rowCount(); ++i) {

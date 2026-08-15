@@ -10,6 +10,7 @@
 #include <QByteArray>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <algorithm>
 #include "core/types.h"
 #include "infrastructure/gantry/pid_controller.h"
 #include "infrastructure/gantry/serial_transport.h"
@@ -47,9 +48,20 @@ public:
     // ASSUMPTION: verify/tune against real gantry hardware.
     void setPidGains(double kp, double ki, double kd) { m_pid.setGains(kp, ki, kd); }
 
+    // Max PWM change per 20ms control tick — an outer limiter on top of the
+    // PID, capping effective acceleration. Too low and the loop can't keep up
+    // with a fast trajectory; too high and the axis jerks mechanically.
+    void setPwmRampPerTick(int pwmPerTick) { m_pwmRampPerTick = std::clamp(pwmPerTick, 1, MAX_PWM); }
+    int  pwmRampPerTick() const { return m_pwmRampPerTick; }
+
     ConnectionStateMachine::State connectionState() const { return m_stateMachine->state(); }
 
 public slots:
+    /// Apply the whole closed-loop configuration in one shot. Preferred over
+    /// the individual setters when coming from another thread, so the control
+    /// loop can't run a tick with new gains against old limits.
+    void applyTuning(const GantryTuning& tuning);
+
     bool connectPort(const QString& portName);
     void disconnectPort();
 
@@ -124,7 +136,9 @@ private:
     // Closed-loop
     int m_currentPwm = 0;
     static constexpr int MAX_PWM = 255;
-    static constexpr int MAX_PWM_CHANGE_PER_TICK = 15; // Slower ramp to prevent overshoot, kept as an outer limiter on top of the PID
+    // Outer ramp limiter on top of the PID. Configurable via setPwmRampPerTick();
+    // the default matches the long-standing hardcoded value.
+    int m_pwmRampPerTick = 15;
     gantry::PIDController m_pid{0.8, 0.1, 0.05, -MAX_PWM, MAX_PWM};
     QElapsedTimer m_pidClock;
     bool m_pidClockValid = false;

@@ -94,8 +94,17 @@ struct GantryLimits {
     double maxMm = 1000.0;
 };
 
-/// Real motor-spec parameters for the linear gantry axis, used to DERIVE its
-/// max linear velocity (see motion::deriveMaxGantryVelocityMmPerSec). Max
+/// What the external axis physically is. Linear drives a gantry/slider and
+/// works in millimetres; Rotary is a bare motor with no linear conversion and
+/// works in degrees. The same Arduino firmware serves both — only the
+/// host-side unit derivation and the UI labels differ.
+enum class GantryAxisType : int {
+    Linear = 0,   // gantry / slider — units are mm
+    Rotary = 1    // bare motor — units are degrees
+};
+
+/// Real motor-spec parameters for the external axis, used to DERIVE its
+/// max velocity (see motion::deriveMaxGantryVelocityUnitsPerSec). Max
 /// acceleration can't be derived from RPM/gear ratio alone (needs torque/
 /// load data), so it stays a direct-entry field. `configured` is the real
 /// gate: false means "user hasn't set this up yet" — every consumer must
@@ -105,9 +114,29 @@ struct GantryLimits {
 struct GantryMotorSpec {
     double motorRpm          = 3000.0;
     double gearRatio         = 1.0;   // motor revs per ONE output/leadscrew rev (10:1 reducer => 10)
-    double mmPerRev          = 4.0;   // linear travel per output rev: leadscrew pitch, or pi * pulley diameter
+    double mmPerRev          = 4.0;   // travel per output rev: leadscrew pitch or pi*pulley dia (Linear only)
     double maxAccelMmPerSec2 = 400.0; // not derivable from RPM/gear ratio — direct entry
     bool   configured        = false;
+    GantryAxisType axisType  = GantryAxisType::Linear;
+};
+
+/// Runtime closed-loop configuration for the external axis. Deliberately
+/// SEPARATE from GantryMotorSpec: that struct's `configured` flag gates
+/// trajectory-feasibility math and is copied by value into SegmentsModel,
+/// TimelineScene and PropertiesPanel, none of which want PID gains. Two
+/// independent `configured` flags means tuning the PID can't silently switch
+/// on physics-based trigger-time flooring against an unentered motor spec.
+///
+/// `travelLimits` reuses GantryLimits; its minMm/maxMm members are read as
+/// generic axis units (mm when Linear, degrees when Rotary).
+struct GantryTuning {
+    double       countsPerUnit  = 100.0;  // encoder counts per mm (Linear) or per degree (Rotary)
+    GantryLimits travelLimits;            // min/max travel, in axis units
+    int          pwmRampPerTick = 15;     // max PWM change per 20ms control tick
+    double       pidKp = 0.8;             // defaults mirror GantryAxisController's
+    double       pidKi = 0.1;
+    double       pidKd = 0.05;
+    bool         configured = false;
 };
 
 /// Per-channel bounds for FIZ (focus/iris/zoom) setpoints, in percent.
@@ -186,6 +215,9 @@ struct Project {
 
     // Gantry
     QList<GantryKeyframe>     gantryKeyframes;
+    // LEGACY: kept for .crp back-compat and mirrored on save, but never read
+    // at runtime — gantryTuning.countsPerUnit is the source of truth.
     double                    gantryEncoderCountsPerMm = 100.0;
     GantryMotorSpec           gantryMotorSpec;
+    GantryTuning              gantryTuning;
 };

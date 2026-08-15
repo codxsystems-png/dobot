@@ -12,6 +12,7 @@ class PointsModel;
 class GantryService;
 class FizService;
 struct GantryMotorSpec;
+struct GantryTuning;
 
 namespace timeline {
 
@@ -21,7 +22,8 @@ public:
                                              PointsModel* points,
                                              GantryService* gantry,
                                              FizService* fiz,
-                                             const GantryMotorSpec* motorSpec = nullptr);
+                                             const GantryMotorSpec* motorSpec = nullptr,
+                                             const GantryTuning* tuning = nullptr);
 };
 
 } // namespace timeline

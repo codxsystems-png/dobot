@@ -53,6 +53,32 @@ void GantryAxisController::setEncoderCountsPerMm(double countsPerMm)
     m_countsPerMm = qMax(0.1, countsPerMm);
 }
 
+void GantryAxisController::applyTuning(const GantryTuning& tuning)
+{
+    setEncoderCountsPerMm(tuning.countsPerUnit);
+    setTravelLimits(tuning.travelLimits);
+    setPidGains(tuning.pidKp, tuning.pidKi, tuning.pidKd);
+    setPwmRampPerTick(tuning.pwmRampPerTick);
+
+    // Gains changing mid-flight leave an integral accumulated under the old
+    // ones, which is meaningless — and a scale-factor change makes every
+    // historical error term wrong outright.
+    m_pid.reset();
+    m_pidClockValid = false;
+
+    StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+        "GantryAxisController",
+        QString("Tuning applied: %1 counts/unit, travel [%2, %3], ramp %4 PWM/tick, "
+                "PID(%5, %6, %7)")
+            .arg(tuning.countsPerUnit, 0, 'f', 3)
+            .arg(tuning.travelLimits.minMm, 0, 'f', 1)
+            .arg(tuning.travelLimits.maxMm, 0, 'f', 1)
+            .arg(tuning.pwmRampPerTick)
+            .arg(tuning.pidKp, 0, 'f', 4)
+            .arg(tuning.pidKi, 0, 'f', 4)
+            .arg(tuning.pidKd, 0, 'f', 4));
+}
+
 bool GantryAxisController::connectPort(const QString& portName)
 {
     m_lastPortName = portName;
@@ -311,7 +337,7 @@ void GantryAxisController::processClosedLoop()
         m_saturationLogged = false;
     }
 
-    int delta = std::clamp(desiredPwm - m_currentPwm, -MAX_PWM_CHANGE_PER_TICK, MAX_PWM_CHANGE_PER_TICK);
+    int delta = std::clamp(desiredPwm - m_currentPwm, -m_pwmRampPerTick, m_pwmRampPerTick);
     setMotorPwm(m_currentPwm + delta);
 }
 

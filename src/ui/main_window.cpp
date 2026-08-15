@@ -316,9 +316,16 @@ void MainWindow::createCentralLayout()
         // trigger times (see dropMimeData) without a ProjectService pointer.
         connect(m_projectService, &ProjectService::projectLoaded, this, [this]() {
             m_segmentsModel->setGantryMotorSpec(m_projectService->project().gantryMotorSpec);
+            pushGantryTuning();
         });
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 m_segmentsModel, &SegmentsModel::setGantryMotorSpec);
+        // Encoder calibration / travel limits / PID gains only take effect if
+        // they're actually pushed to the controller thread — before this they
+        // were persisted but never applied, leaving m_countsPerMm hardcoded.
+        connect(m_projectService, &ProjectService::gantryTuningChanged,
+                this, [this](const GantryTuning&) { pushGantryTuning(); });
+        pushGantryTuning(); // initial push, even for a default project
     }
 
     m_exportService = new ExportService(m_segmentsModel, pointsModel, this);
@@ -941,6 +948,17 @@ void MainWindow::onGantryMotorSetup()
 {
     GantrySetupDialog dlg(m_projectService, this);
     dlg.exec();
+}
+
+void MainWindow::pushGantryTuning()
+{
+    if (!m_projectService || !m_gantryController) return;
+
+    // Copy by value — the lambda runs later, on the controller's own thread.
+    const GantryTuning tuning = m_projectService->project().gantryTuning;
+    QMetaObject::invokeMethod(m_gantryController, [this, tuning]() {
+        m_gantryController->applyTuning(tuning);
+    }, Qt::QueuedConnection);
 }
 
 void MainWindow::onDiagnostics()
