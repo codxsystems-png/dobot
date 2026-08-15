@@ -37,8 +37,9 @@ struct RelayResult {
     double  ki = 0.0;
     double  kd = 0.0;
     int     cyclesUsed = 0;
-    double  periodSpreadPercent = 0.0;  // convergence quality; high == unusable
-    double  amplitudeUnits = 0.0;       // mean half peak-to-peak of the oscillation
+    double  periodSpreadPercent = 0.0;  // robust (p10-p90) convergence quality
+    double  amplitudeUnits = 0.0;       // median half peak-to-peak of the oscillation
+    double  samplesPerCycle = 0.0;      // measurement resolution; < ~8 is coarse
     QString message;
 };
 

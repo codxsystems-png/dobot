@@ -96,6 +96,49 @@ private slots:
         QVERIFY(std::abs(kd - expectedKd) < 1e-9);
     }
 
+    void testSingleOutlierCycleDoesNotRejectACleanOscillation()
+    {
+        // Real hardware produced 75 clean-looking cycles that were rejected
+        // because ONE hiccup set a max-min spread of 24%. Over dozens of
+        // cycles, max-min is dominated by its worst sample; the convergence
+        // test must use a robust spread instead.
+        const double period = 0.4;
+        auto trace = makeLimitCycle(period, 5.0, 0.0, 12.0);
+
+        // Inject a single distorted stretch, as a friction hiccup would.
+        for (auto& s : trace) {
+            if (s.t > 5.0 && s.t < 5.6) s.measured *= 0.35;
+        }
+
+        RelayResult r = analyzeRelayOscillation(trace, 60.0, 0.0);
+        QVERIFY2(r.ok, qPrintable("one bad cycle rejected an otherwise clean "
+                                   "oscillation: " + r.message));
+        QVERIFY2(std::abs(r.tu - period) < 0.05,
+                 qPrintable(QString("outlier skewed Tu to %1s").arg(r.tu)));
+    }
+
+    void testSamplesPerCycleIsReported()
+    {
+        // 0.4s period at 50Hz == 20 samples per cycle.
+        auto trace = makeLimitCycle(0.4, 5.0, 0.0, 6.0);
+        RelayResult r = analyzeRelayOscillation(trace, 60.0, 0.0);
+        QVERIFY(r.ok);
+        QVERIFY2(std::abs(r.samplesPerCycle - 20.0) < 2.0,
+                 qPrintable(QString("expected ~20 samples/cycle, got %1")
+                                .arg(r.samplesPerCycle)));
+    }
+
+    void testCoarselyResolvedCycleIsFlaggedButAccepted()
+    {
+        // 0.16s period at 50Hz == 8 samples per cycle, matching the observed
+        // hardware. Usable, but the user must be told Tu is coarse.
+        auto trace = makeLimitCycle(0.16, 5.0, 0.0, 12.0);
+        RelayResult r = analyzeRelayOscillation(trace, 60.0, 0.0);
+        QVERIFY2(r.ok, qPrintable(r.message));
+        QVERIFY2(r.message.contains("samples per cycle"),
+                 qPrintable("coarse resolution not surfaced: " + r.message));
+    }
+
     void testNonConvergentTraceIsRejected()
     {
         // A chirp: the period keeps changing, so there is no limit cycle and

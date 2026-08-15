@@ -10,6 +10,9 @@ constexpr int    kDiscardCycles       = 2;    // startup transient
 constexpr int    kMinUsableCycles     = 4;
 constexpr double kMaxPeriodSpreadPct  = 20.0; // above this, call it non-convergent
 constexpr double kMinAmplitude        = 1e-6;
+/// Below this the control tick simply can't resolve the period well; the
+/// result is still usable as a starting point but shouldn't be trusted blind.
+constexpr double kCoarseSamplesPerCycle = 10.0;
 // MSVC only defines M_PI with _USE_MATH_DEFINES; spell it out rather than
 // depend on which headers happen to have been pulled in.
 constexpr double kPi                  = 3.14159265358979323846;
@@ -91,31 +94,39 @@ RelayResult analyzeRelayOscillation(const QVector<StepSample>& samples,
     }
     r.cyclesUsed = periods.size();
 
-    double periodSum = 0.0;
-    double periodMin = periods.first();
-    double periodMax = periods.first();
-    for (double p : periods) {
-        periodSum += p;
-        periodMin = std::min(periodMin, p);
-        periodMax = std::max(periodMax, p);
-    }
-    r.tu = periodSum / periods.size();
+    // Median, not mean, and a p10-p90 spread rather than max-min. Over dozens
+    // of cycles a single hiccup dominates max-min, which would reject an
+    // otherwise clean limit cycle — the most outlier-sensitive statistic
+    // available is the wrong convergence test.
+    QVector<double> sorted = periods;
+    std::sort(sorted.begin(), sorted.end());
+    auto percentile = [&sorted](double frac) {
+        const int last = static_cast<int>(sorted.size()) - 1;
+        int idx = std::clamp(static_cast<int>(frac * last), 0, last);
+        return sorted[idx];
+    };
+    r.tu = percentile(0.50);
 
     if (r.tu <= 0.0) {
         r.message = "degenerate oscillation period";
         return r;
     }
 
-    r.periodSpreadPercent = (periodMax - periodMin) / r.tu * 100.0;
+    r.periodSpreadPercent = (percentile(0.90) - percentile(0.10)) / r.tu * 100.0;
+
+    // How well-resolved each cycle is. At 50Hz a fast limit cycle can leave
+    // very few samples per period, which limits how precisely Tu can be known
+    // no matter how clean the oscillation actually is.
+    double captureSpan = samples.last().t - samples.first().t;
+    if (captureSpan > 0.0) {
+        double sampleRate = samples.size() / captureSpan;
+        r.samplesPerCycle = sampleRate * r.tu;
+    }
 
     // ─── Amplitude: mean half peak-to-peak over the usable window ─────────
     // Measured per-cycle rather than globally, so one outlier excursion can't
     // inflate Ku for the whole run.
-    double windowStart = crossingTimes[kDiscardCycles];
-    double windowEnd   = crossingTimes.last();
-    double sumHalfPkPk = 0.0;
-    int    cyclesMeasured = 0;
-
+    QVector<double> halfPkPk;
     for (int c = kDiscardCycles; c < crossingTimes.size() - 1; ++c) {
         double t0 = crossingTimes[c], t1 = crossingTimes[c + 1];
         bool any = false;
@@ -127,18 +138,17 @@ RelayResult analyzeRelayOscillation(const QVector<StepSample>& samples,
             lo = std::min(lo, v);
             hi = std::max(hi, v);
         }
-        if (any) {
-            sumHalfPkPk += (hi - lo) / 2.0;
-            ++cyclesMeasured;
-        }
+        if (any) halfPkPk.append((hi - lo) / 2.0);
     }
-    Q_UNUSED(windowStart) Q_UNUSED(windowEnd)
 
-    if (cyclesMeasured == 0) {
+    if (halfPkPk.isEmpty()) {
         r.message = "could not measure oscillation amplitude";
         return r;
     }
-    r.amplitudeUnits = sumHalfPkPk / cyclesMeasured;
+    // Median again — Ku is inversely proportional to this, so one outsized
+    // excursion would otherwise drag the proposed gains down across the board.
+    std::sort(halfPkPk.begin(), halfPkPk.end());
+    r.amplitudeUnits = halfPkPk[halfPkPk.size() / 2];
 
     if (r.amplitudeUnits < kMinAmplitude) {
         r.message = "oscillation amplitude is effectively zero — "
@@ -161,11 +171,18 @@ RelayResult analyzeRelayOscillation(const QVector<StepSample>& samples,
     applyTuneRule(r.ku, r.tu, rule, r.kp, r.ki, r.kd);
 
     r.ok = true;
-    r.message = QString("Ku=%1, Tu=%2s from %3 cycles (period spread %4%%)")
+    r.message = QString("Ku=%1, Tu=%2s from %3 cycles (spread %4%%, %5 samples/cycle)")
                     .arg(r.ku, 0, 'f', 3)
                     .arg(r.tu, 0, 'f', 3)
                     .arg(r.cyclesUsed)
-                    .arg(r.periodSpreadPercent, 0, 'f', 1);
+                    .arg(r.periodSpreadPercent, 0, 'f', 1)
+                    .arg(r.samplesPerCycle, 0, 'f', 1);
+    if (r.samplesPerCycle < kCoarseSamplesPerCycle) {
+        r.message += QString("\nOnly %1 samples per cycle at this period — Tu is "
+                             "coarsely resolved, so treat the gains as a starting "
+                             "point and verify with a step test.")
+                         .arg(r.samplesPerCycle, 0, 'f', 1);
+    }
     return r;
 }
 
