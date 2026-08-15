@@ -214,6 +214,17 @@ private:
     static constexpr int    SETTLE_TIMEOUT_MS      = 8000;
 
     double m_settleTolerance = TUNE_SETTLE_TOLERANCE; // set per run
+
+    // The settle phase must SLEW its target to the midpoint, not step to it.
+    // Commanding the centre outright from far away gives the PID an error of
+    // thousands of units: it saturates instantly, drives flat out, overshoots
+    // massively and oscillates — a step no controller could follow. Moving the
+    // target at a bounded rate keeps the loop in its linear region.
+    double m_settleTarget      = 0.0;
+    double m_settleSlewPerTick = 0.0;
+    /// Seconds to traverse the whole workspace while settling. Sized so a
+    /// full-span move still leaves time to settle inside SETTLE_TIMEOUT_MS.
+    static constexpr double SETTLE_SLEW_SPAN_SEC = 4.0;
     static constexpr int    TUNE_FEEDBACK_LOSS_TICKS = 10; // 200ms with no encoder
     static constexpr double TUNE_RUNAWAY_FACTOR    = 2.5;  // x excursion from centre
     static constexpr double TUNE_MARGIN_FRACTION   = 0.10; // of total travel span

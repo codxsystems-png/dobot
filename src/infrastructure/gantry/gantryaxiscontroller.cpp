@@ -273,6 +273,8 @@ void GantryAxisController::startStepTest(double stepSizeUnits)
     m_tuneTimeoutMs = TUNE_TIMEOUT_MS;
     // A step test needs a genuinely stable baseline to measure against.
     m_settleTolerance = TUNE_SETTLE_TOLERANCE;
+    m_settleTarget      = m_currentPositionMm;
+    m_settleSlewPerTick = (span / SETTLE_SLEW_SPAN_SEC) * 0.020;
     m_tuneSettleTicks   = 0;
     m_ticksSinceEncoder = 0;
     m_tunePhase = TunePhase::Settling;
@@ -324,6 +326,8 @@ void GantryAxisController::startAutoTune(double relayAmplitudePwm)
     m_tuneStepSize = span * 0.25;
     m_tuneTimeoutMs = AUTOTUNE_TIMEOUT_MS;
     m_settleTolerance = std::max(RELAY_SETTLE_FLOOR, span * RELAY_SETTLE_FRACTION);
+    m_settleTarget      = m_currentPositionMm;
+    m_settleSlewPerTick = (span / SETTLE_SLEW_SPAN_SEC) * 0.020;
 
     m_tuneSettleTicks   = 0;
     m_ticksSinceEncoder = 0;
@@ -352,7 +356,14 @@ bool GantryAxisController::serviceAutoTune()
 
     switch (m_tunePhase) {
     case TunePhase::Settling:
-        m_targetPositionMm = m_tuneCentre;
+        // Advance the commanded target toward the centre at a bounded rate
+        // rather than jumping to it, so the PID never sees a huge error.
+        if (m_settleTarget < m_tuneCentre) {
+            m_settleTarget = std::min(m_tuneCentre, m_settleTarget + m_settleSlewPerTick);
+        } else {
+            m_settleTarget = std::max(m_tuneCentre, m_settleTarget - m_settleSlewPerTick);
+        }
+        m_targetPositionMm = m_settleTarget;
         if (std::abs(m_currentPositionMm - m_tuneCentre) < m_settleTolerance) {
             if (++m_tuneSettleTicks >= TUNE_SETTLE_TICKS) {
                 m_tunePhase = TunePhase::Relaying;
@@ -496,7 +507,14 @@ bool GantryAxisController::serviceStepTest()
     // ─── Phase machine ────────────────────────────────────────────────────
     switch (m_tunePhase) {
     case TunePhase::Settling:
-        m_targetPositionMm = m_tuneCentre;
+        // Advance the commanded target toward the centre at a bounded rate
+        // rather than jumping to it, so the PID never sees a huge error.
+        if (m_settleTarget < m_tuneCentre) {
+            m_settleTarget = std::min(m_tuneCentre, m_settleTarget + m_settleSlewPerTick);
+        } else {
+            m_settleTarget = std::max(m_tuneCentre, m_settleTarget - m_settleSlewPerTick);
+        }
+        m_targetPositionMm = m_settleTarget;
         if (std::abs(m_currentPositionMm - m_tuneCentre) < m_settleTolerance) {
             if (++m_tuneSettleTicks >= TUNE_SETTLE_TICKS) {
                 m_tunePhase = TunePhase::Stepping;
