@@ -368,6 +368,7 @@ bool GantryAxisController::serviceAutoTune()
             if (++m_tuneSettleTicks >= TUNE_SETTLE_TICKS) {
                 m_tunePhase = TunePhase::Relaying;
                 m_tuneCapture.restart();  // t = 0 at the start of the limit cycle
+                emit measurementStarted(); // listeners drop the settle preamble
             }
         } else {
             m_tuneSettleTicks = 0;
@@ -520,6 +521,7 @@ bool GantryAxisController::serviceStepTest()
                 m_tunePhase = TunePhase::Stepping;
                 m_targetPositionMm = m_tuneCentre + m_tuneStepSize;
                 m_tuneCapture.restart();   // t = 0 at the step
+                emit measurementStarted(); // listeners drop the settle preamble
             }
         } else {
             m_tuneSettleTicks = 0;

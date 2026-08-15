@@ -51,6 +51,15 @@ GantryTuningDialog::GantryTuningDialog(ProjectService* projectService,
     if (m_controller) {
         connect(m_controller, &GantryAxisController::stepTelemetry,
                 this, &GantryTuningDialog::onStepTelemetry);
+        // Drop the settle traverse: only the measured phase belongs in the
+        // capture, or metrics get computed against the wrong baseline.
+        connect(m_controller, &GantryAxisController::measurementStarted, this, [this]() {
+            m_capture.clear();
+            m_plot->clear();
+            m_plot->setCapturing(true);
+            m_statusLabel->setText("Measuring…");
+            m_statusLabel->setStyleSheet("color: #ff8844; font-size: 10px;");
+        });
         connect(m_controller, &GantryAxisController::stepTestFinished,
                 this, &GantryTuningDialog::onStepTestFinished);
         connect(m_controller, &GantryAxisController::autoTuneFinished,

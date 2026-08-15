@@ -109,6 +109,11 @@ signals:
     /// it costs nothing in normal operation). `stale` marks a tick where no
     /// fresh encoder reply arrived, so `measured` is a carried-over value.
     void stepTelemetry(double tSec, double setpoint, double measured, int pwm, bool stale);
+    /// The preamble (settling to mid-travel) is over and the measured phase
+    /// has begun; the capture clock restarts here. Listeners must discard
+    /// anything captured so far, or the settle traverse gets analysed as part
+    /// of the response and every metric is computed off the wrong baseline.
+    void measurementStarted();
     void stepTestFinished();
     /// Relay run completed cleanly; the captured telemetry is ready to analyse.
     /// Carries back what the relay actually used, so the analysis doesn't have
