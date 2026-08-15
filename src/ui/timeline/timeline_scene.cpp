@@ -449,7 +449,7 @@ void TimelineScene::dropEvent(QGraphicsSceneDragDropEvent* event)
             } else {
                 m_segModel->addSegment(seg);
             }
-            emit pointDroppedOnTimeline(pointId, timeSec);
+            emit pointDroppedOnTimeline(pointId, timeSec, seg.id);
         }
         event->acceptProposedAction();
         QGraphicsScene::dropEvent(event);

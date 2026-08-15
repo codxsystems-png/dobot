@@ -25,11 +25,14 @@ QString unitLabel(const GantryMotorSpec& spec);      // "mm"     | "deg"
 QString velocityLabel(const GantryMotorSpec& spec);  // "mm/s"   | "°/s"
 QString accelLabel(const GantryMotorSpec& spec);     // "mm/s²"  | "°/s²"
 
-/// Minimum physically-feasible duration (seconds) for the gantry to move
-/// from fromPt.gantryPositionMm to toPt.gantryPositionMm, given spec. If
-/// spec.configured is false, or the spec is invalid (gearRatio <= 0), returns
-/// fallbackSec unchanged rather than fabricating a physics answer from an
-/// unset/broken spec.
+/// Minimum physically-feasible duration (seconds) to move the axis by
+/// `distanceUnits` (mm or degrees), given spec. If spec.configured is false,
+/// or the spec is invalid (gearRatio <= 0), returns fallbackSec unchanged
+/// rather than fabricating a physics answer from an unset/broken spec.
+double minGantryDurationForDistanceSec(double distanceUnits,
+                                        const GantryMotorSpec& spec, double fallbackSec);
+
+/// As above, for the travel between two taught points' axis positions.
 double minGantryDurationSec(const CameraPoint& fromPt, const CameraPoint& toPt,
                              const GantryMotorSpec& spec, double fallbackSec);
 

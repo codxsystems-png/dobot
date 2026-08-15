@@ -48,6 +48,12 @@
 #include <QTimer>
 #include <QDebug>
 
+// Adding a point to the timeline creates a TimelineSegment plus a matching
+// standalone Gantry/FIZ keyframe (so the point shows on those curve rows).
+// Deriving the keyframe id from the segment id keeps the pair findable, so
+// dragging the segment can move its keyframes with it instead of desyncing.
+static const QString kAutoKeyframeSuffix = "_auto";
+
 // ─── Constructor ────────────────────────────────────────────────────────────────
 
 MainWindow::MainWindow(QWidget* parent)
@@ -507,10 +513,11 @@ void MainWindow::createConnections()
                     seg.triggerTime = timeSec;
                     m_segmentsModel->addSegment(seg);
 
-                    // Sync Gantry keyframe
+                    // Sync Gantry keyframe (id derived from the segment so a
+                    // later drag can carry it — see segmentMoved below)
                     if (m_gantryService) {
                         GantryKeyframe gkf;
-                        gkf.id         = QUuid::createUuid().toString();
+                        gkf.id         = seg.id + kAutoKeyframeSuffix;
                         gkf.time       = timeSec;
                         gkf.positionMm = pt.id.isEmpty() ? m_gantryService->currentPositionMm() : pt.gantryPositionMm;
                         m_gantryService->addKeyframe(gkf);
@@ -519,7 +526,7 @@ void MainWindow::createConnections()
                     // Sync FIZ keyframe
                     if (m_fizService) {
                         FizKeyframe fkf;
-                        fkf.id    = QUuid::createUuid().toString();
+                        fkf.id    = seg.id + kAutoKeyframeSuffix;
                         fkf.time  = timeSec;
                         fkf.state = pt.id.isEmpty() ? m_fizService->currentState() : pt.fizState;
                         m_fizService->addKeyframe(fkf);
@@ -579,7 +586,32 @@ void MainWindow::createConnections()
         // Refresh the panel after a drag so its Trigger field doesn't show
         // a stale time (the dragged segment is always the selected one).
         connect(m_timelineView, &TimelineView::segmentMoved,
-                this, [this](const QString& segId, double) { m_propertiesPanel->loadSegment(segId); });
+                this, [this](const QString& segId, double newTime) {
+                    m_propertiesPanel->loadSegment(segId);
+                    // Carry the point's Gantry/FIZ curve keyframes with it.
+                    // Without this the segment moves but its diamonds stay
+                    // behind, so the curve rows silently disagree with the
+                    // timeline about when the axis is meant to be where.
+                    const QString autoId = segId + kAutoKeyframeSuffix;
+                    if (m_gantryService) {
+                        for (auto kf : m_gantryService->keyframes()) {
+                            if (kf.id == autoId) {
+                                kf.time = newTime;
+                                m_gantryService->updateKeyframe(kf);
+                                break;
+                            }
+                        }
+                    }
+                    if (m_fizService) {
+                        for (auto kf : m_fizService->keyframes()) {
+                            if (kf.id == autoId) {
+                                kf.time = newTime;
+                                m_fizService->updateKeyframe(kf);
+                                break;
+                            }
+                        }
+                    }
+                });
         // Explain drag/edit clamps instead of letting them look like silent
         // snaps — the gantry physically can't arrive any sooner.
         connect(m_timelineView->scene(), &TimelineScene::segmentMoveClamped,
@@ -608,7 +640,7 @@ void MainWindow::createConnections()
         });
 
         connect(m_timelineView, &TimelineView::pointDroppedOnTimeline,
-                this, [this](const QString& pointId, double timeSec) {
+                this, [this](const QString& pointId, double timeSec, const QString& segId) {
                     // Retrieve CameraPoint
                     CameraPoint pt;
                     if (m_pointsLibrary && m_pointsLibrary->listView()->model()) {
@@ -616,19 +648,20 @@ void MainWindow::createConnections()
                         if (pointsModel) pt = pointsModel->pointById(pointId);
                     }
 
-                    // Sync Gantry keyframe on drop
+                    // Sync Gantry/FIZ keyframes on drop. Their ids are derived
+                    // from the segment id (not random) so a later segment drag
+                    // can find and carry them along — see segmentMoved below.
                     if (m_gantryService) {
                         GantryKeyframe gkf;
-                        gkf.id         = QUuid::createUuid().toString();
+                        gkf.id         = segId + kAutoKeyframeSuffix;
                         gkf.time       = timeSec;
                         gkf.positionMm = pt.id.isEmpty() ? m_gantryService->currentPositionMm() : pt.gantryPositionMm;
                         m_gantryService->addKeyframe(gkf);
                     }
 
-                    // Sync FIZ keyframe on drop
                     if (m_fizService) {
                         FizKeyframe fkf;
-                        fkf.id    = QUuid::createUuid().toString();
+                        fkf.id    = segId + kAutoKeyframeSuffix;
                         fkf.time  = timeSec;
                         fkf.state = pt.id.isEmpty() ? m_fizService->currentState() : pt.fizState;
                         m_fizService->addKeyframe(fkf);
@@ -774,8 +807,16 @@ void MainWindow::createConnections()
             this, [this](double time, float valueMm) {
                 GantryKeyframe kf;
                 kf.id         = QUuid::createUuid().toString();
-                kf.time       = time;
                 kf.positionMm = valueMm;
+                // Placed by hand at an arbitrary time — floor it so the move
+                // from the preceding keyframe is actually achievable, instead
+                // of only finding out at Play time.
+                kf.time = flooredGantryKeyframeTime(kf.id, time, valueMm);
+                if (kf.time > time + 1e-6) {
+                    statusBar()->showMessage(
+                        QString("Gantry keyframe placed at %1s — the axis cannot reach that "
+                                "position any sooner.").arg(kf.time, 0, 'f', 2), 5000);
+                }
                 m_gantryService->addKeyframe(kf);
             });
 
@@ -792,7 +833,18 @@ void MainWindow::createConnections()
     connect(m_fizTrackWidget, &FizTrackWidget::fizKeyframeMoved,
             this, [this](const FizKeyframe& kf) { m_fizService->updateKeyframe(kf); });
     connect(m_fizTrackWidget, &FizTrackWidget::gantryKeyframeMoved,
-            this, [this](const GantryKeyframe& kf) { m_gantryService->updateKeyframe(kf); });
+            this, [this](const GantryKeyframe& kf) {
+                // Same floor as placement — dragging a diamond earlier than
+                // the axis can physically get there snaps it back.
+                GantryKeyframe adjusted = kf;
+                adjusted.time = flooredGantryKeyframeTime(kf.id, kf.time, kf.positionMm);
+                if (adjusted.time > kf.time + 1e-6) {
+                    statusBar()->showMessage(
+                        QString("Gantry keyframe clamped to %1s — the axis cannot reach that "
+                                "position any sooner.").arg(adjusted.time, 0, 'f', 2), 5000);
+                }
+                m_gantryService->updateKeyframe(adjusted);
+            });
     connect(m_fizTrackWidget, &FizTrackWidget::fizKeyframeDeleteRequested,
             this, [this](const QString& id) { m_fizService->removeKeyframe(id); });
     connect(m_fizTrackWidget, &FizTrackWidget::gantryKeyframeDeleteRequested,
@@ -959,6 +1011,32 @@ void MainWindow::onGantryMotorSetup()
 {
     GantrySetupDialog dlg(m_projectService, this);
     dlg.exec();
+}
+
+double MainWindow::flooredGantryKeyframeTime(const QString& excludeId,
+                                             double proposedTime,
+                                             double positionUnits) const
+{
+    if (!m_gantryService || !m_projectService) return proposedTime;
+
+    const GantryMotorSpec& spec = m_projectService->project().gantryMotorSpec;
+
+    // Nearest keyframe strictly before the proposed time (excluding the one
+    // being moved, which would otherwise anchor against itself).
+    bool havePrev = false;
+    GantryKeyframe prev;
+    for (const auto& kf : m_gantryService->keyframes()) {
+        if (kf.id == excludeId) continue;
+        if (kf.time <= proposedTime && (!havePrev || kf.time > prev.time)) {
+            prev = kf;
+            havePrev = true;
+        }
+    }
+    if (!havePrev) return proposedTime; // nothing precedes it — unconstrained
+
+    double minGap = motion::minGantryDurationForDistanceSec(
+        positionUnits - prev.positionMm, spec, 0.0);
+    return qMax(proposedTime, prev.time + minGap);
 }
 
 void MainWindow::pushGantryTuning()

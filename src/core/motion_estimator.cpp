@@ -34,8 +34,8 @@ QString accelLabel(const GantryMotorSpec& spec)
     return spec.axisType == GantryAxisType::Rotary ? QStringLiteral("°/s²") : QStringLiteral("mm/s²");
 }
 
-double minGantryDurationSec(const CameraPoint& fromPt, const CameraPoint& toPt,
-                             const GantryMotorSpec& spec, double fallbackSec)
+double minGantryDurationForDistanceSec(double distanceUnits,
+                                        const GantryMotorSpec& spec, double fallbackSec)
 {
     if (!spec.configured) return fallbackSec;
 
@@ -43,11 +43,18 @@ double minGantryDurationSec(const CameraPoint& fromPt, const CameraPoint& toPt,
     if (vMax <= 0.0) return fallbackSec; // invalid spec — don't block the user
 
     double aMax = spec.maxAccelMmPerSec2 > 0.0 ? spec.maxAccelMmPerSec2 : 1.0;
-    double distanceMm = std::abs(toPt.gantryPositionMm - fromPt.gantryPositionMm);
-    if (distanceMm < 1e-6) return 0.0; // no gantry move at all — no artificial floor
+    double distance = std::abs(distanceUnits);
+    if (distance < 1e-6) return 0.0; // no move at all — no artificial floor
 
-    math::TrapezoidalProfile profile(0.0, distanceMm, vMax, aMax);
+    math::TrapezoidalProfile profile(0.0, distance, vMax, aMax);
     return profile.duration();
+}
+
+double minGantryDurationSec(const CameraPoint& fromPt, const CameraPoint& toPt,
+                             const GantryMotorSpec& spec, double fallbackSec)
+{
+    return minGantryDurationForDistanceSec(
+        toPt.gantryPositionMm - fromPt.gantryPositionMm, spec, fallbackSec);
 }
 
 } // namespace motion

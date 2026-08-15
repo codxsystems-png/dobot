@@ -74,7 +74,7 @@ signals:
     // time for that move and got clamped up.
     void segmentMoveClamped(const QString& segId, double clampedTime, double requestedTime);
     void playheadMoved(double seconds);
-    void pointDroppedOnTimeline(const QString& pointId, double timeSec);
+    void pointDroppedOnTimeline(const QString& pointId, double timeSec, const QString& segId);
 
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent* event) override;

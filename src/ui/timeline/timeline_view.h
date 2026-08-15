@@ -36,7 +36,7 @@ signals:
     void playheadTimeChanged(double seconds);
     void scrollOffsetChanged(int px);
     void pixelsPerSecondChanged(double pps);
-    void pointDroppedOnTimeline(const QString& pointId, double timeSec);
+    void pointDroppedOnTimeline(const QString& pointId, double timeSec, const QString& segId);
 
 public slots:
     void zoomIn();

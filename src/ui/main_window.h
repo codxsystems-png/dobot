@@ -99,6 +99,14 @@ private:
     /// on project load, and whenever the tuning changes.
     void pushGantryTuning();
 
+    /// Floors a proposed GANTRY-track keyframe time so the move from its
+    /// preceding keyframe is physically achievable. Without this, placing or
+    /// dragging a diamond on the GANTRY curve row can create a gap that only
+    /// fails at Play time. Returns the (possibly raised) time.
+    double flooredGantryKeyframeTime(const QString& excludeId,
+                                     double proposedTime,
+                                     double positionUnits) const;
+
 private slots:
     void onDiagnostics();
 
