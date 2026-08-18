@@ -125,6 +125,8 @@ target_sources(test_timeline_compiler PRIVATE
     ${CMAKE_SOURCE_DIR}/src/application/gantryservice.cpp
     ${CMAKE_SOURCE_DIR}/src/application/fizservice.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/serial_transport.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/qt_serial_transport.cpp
     ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
@@ -137,6 +139,8 @@ target_sources(test_timeline_compiler PRIVATE
 add_cambot_test(test_gantryaxiscontroller test_gantryaxiscontroller.cpp)
 target_sources(test_gantryaxiscontroller PRIVATE
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/serial_transport.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/qt_serial_transport.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/fake_serial_transport.cpp

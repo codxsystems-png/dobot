@@ -13,39 +13,67 @@
 #include <QSerialPortInfo>
 #endif
 
+GantryAxisController::GantryAxisController(AxisBoardLink* link, int axisIndex, QObject* parent)
+    : QObject(parent)
+    , m_link(link)
+    , m_ownsLink(false)
+    , m_axisIndex(axisIndex)
+{
+    wireLink();
+}
+
 GantryAxisController::GantryAxisController(ISerialTransport* transport, QObject* parent)
     : QObject(parent)
+    , m_link(new AxisBoardLink(transport, this))
+    , m_ownsLink(true)
+    , m_axisIndex(0)
 {
-    m_transport = transport ? transport : createDefaultSerialTransport(this);
-    if (m_transport) {
-        m_transport->setParent(this); // GantryAxisController owns whichever transport it ends up with
+    wireLink();
+}
 
-        connect(m_transport, &ISerialTransport::readyRead, this, &GantryAxisController::onReadyRead);
-        connect(m_transport, &ISerialTransport::errorOccurred, this, &GantryAxisController::onTransportError);
-    }
+void GantryAxisController::wireLink()
+{
+    if (!m_link) return;
 
-    m_stateMachine = new ConnectionStateMachine("GantryAxisController", this);
-    m_stateMachine->setBackoffPolicy(1000, 15000, 2.0);
-    connect(m_stateMachine, &ConnectionStateMachine::reconnectRequested,
-            this, &GantryAxisController::onReconnectRequested);
-    connect(m_stateMachine, &ConnectionStateMachine::requiresReHome, this, [this]() {
-        emit errorOccurred("Gantry reconnected after a fault — re-homing is required before further motion.");
+    m_link->registerAxis(m_axisIndex, this);
+
+    // Relay the link's connection signals so existing consumers (MainWindow,
+    // TeachPanel, the tuning dialog) keep working unchanged.
+    connect(m_link, &AxisBoardLink::connected,     this, &GantryAxisController::connected);
+    connect(m_link, &AxisBoardLink::disconnected,  this, &GantryAxisController::disconnected);
+    connect(m_link, &AxisBoardLink::errorOccurred, this, &GantryAxisController::errorOccurred);
+
+    // The board reboots when the port opens, so the control loop only starts
+    // once it has actually identified itself.
+    connect(m_link, &AxisBoardLink::identified, this, [this](const axisproto::VersionInfo&) {
+        if (m_controlTimer) m_controlTimer->start(20);
     });
 }
 
 GantryAxisController::~GantryAxisController()
 {
-    teardownConnection();
+    if (m_link) m_link->unregisterAxis(m_axisIndex);
+    if (m_controlTimer) m_controlTimer->stop();
 }
 
 QStringList GantryAxisController::availablePorts() const
 {
-    QStringList ports;
-#ifdef HAS_SERIALPORT
-    for (const auto& info : QSerialPortInfo::availablePorts())
-        ports << info.portName();
-#endif
-    return ports;
+    return m_link ? m_link->availablePorts() : QStringList{};
+}
+
+bool GantryAxisController::isConnected() const
+{
+    return m_link && m_link->isConnected();
+}
+
+bool GantryAxisController::isIdentified() const
+{
+    return m_link && m_link->isIdentified();
+}
+
+ConnectionStateMachine::State GantryAxisController::connectionState() const
+{
+    return m_link ? m_link->connectionState() : ConnectionStateMachine::State::Disconnected;
 }
 
 void GantryAxisController::setEncoderCountsPerMm(double countsPerMm)
@@ -81,99 +109,58 @@ void GantryAxisController::applyTuning(const GantryTuning& tuning)
 
 bool GantryAxisController::connectPort(const QString& portName)
 {
-    m_lastPortName = portName;
-    m_stateMachine->notifyConnecting();
+    if (!m_link) return false;
 
-    teardownConnection();
-
-    if (!m_transport) {
-        QString msg = "Qt6::SerialPort not available — Gantry disabled";
-        emit errorOccurred(msg);
-        m_stateMachine->notifyFault(msg);
-        return false;
-    }
-
-    if (!m_transport->open(portName)) {
-        QString msg = "Failed to open " + portName + ": " + m_transport->lastErrorString();
-        emit errorOccurred(msg);
-        m_stateMachine->notifyFault(msg);
-        return false;
-    }
-
-    m_connected = true;
-    m_isHomed = false;
-    m_state = State::Idle;
+    m_isHomed    = false;
+    m_state      = State::Idle;
     m_currentPwm = 0;
-    m_pendingQuery = PendingQuery::None;
-    m_pendingTicks = 0;
+    m_ticksSinceEncoderReply = 0;
+    m_encoderStaleLogged     = false;
+    m_awaitingHomeReply      = false;
 
     if (!m_controlTimer) {
         m_controlTimer = new QTimer(this);
         connect(m_controlTimer, &QTimer::timeout, this, &GantryAxisController::heartbeat);
     }
-    m_controlTimer->start(20); // 50Hz heartbeat for closed-loop control + encoder polling
+    // Deliberately NOT started here — the loop starts on AxisBoardLink's
+    // identified() signal (see wireLink()). Opening the port reboots an Uno,
+    // so polling immediately would just talk to a bootloader.
 
-    // We do not drive the motor here. We wait for the user to explicitly Home the gantry
-    // before any motion command is honored (see tick()).
-
-    qDebug() << "GantryAxisController: Connected to" << portName;
-    emit connected(portName);
-    m_stateMachine->notifyConnected();
-    return true;
+    // We do not drive the motor here. We wait for the user to explicitly Home
+    // the gantry before any motion command is honored (see tick()).
+    return m_link->connectPort(portName);
 }
 
 void GantryAxisController::disconnectPort()
 {
-    bool wasConnected = m_connected;
-    teardownConnection();
-    if (wasConnected) {
-        m_stateMachine->notifyDisconnected("user requested");
-    }
+    if (m_link) m_link->disconnectPort();
 }
 
-void GantryAxisController::teardownConnection()
+void GantryAxisController::onLinkLost()
 {
     // Losing the link mid-tuning means no feedback and no way to stop the
-    // motor over serial — cancel the run before the port closes, while the
-    // explicit "g 0" can still get out.
+    // motor over serial — cancel the run while an explicit stop can still
+    // get out.
     if (m_state == State::StepTest || m_state == State::RelayTune || m_tunePhase != TunePhase::None) {
         abortTuning("connection closed");
     }
 
-    if (m_transport && m_transport->isOpen()) {
-        sendCommand("g 0"); // best-effort stop before closing
-        m_transport->flush();
-        m_transport->close();
-    }
+    if (m_controlTimer) m_controlTimer->stop();
 
-    if (m_controlTimer) {
-        m_controlTimer->stop();
-    }
-
-    if (m_connected) {
-        m_connected = false;
-        m_state = State::Idle;
-        m_pendingQuery = PendingQuery::None;
-        emit disconnected();
-        qDebug() << "GantryAxisController: Disconnected";
-    }
-}
-
-void GantryAxisController::onReconnectRequested()
-{
-    qDebug() << "GantryAxisController: attempting reconnect to" << m_lastPortName;
-    connectPort(m_lastPortName);
+    // Position is no longer trustworthy and the origin is gone with it.
+    m_isHomed    = false;
+    m_state      = State::Idle;
+    m_currentPwm = 0;
 }
 
 void GantryAxisController::homeGantry()
 {
-    if (!m_connected) return;
+    if (!isIdentified()) return;
     qDebug() << "GantryAxisController: Homing (driving toward limit switch)...";
 
     m_isHomed = false;
     m_state = State::Homing;
-    m_pendingQuery = PendingQuery::None;
-    m_pendingTicks = 0;
+    m_awaitingHomeReply = false;
     m_homingElapsed.restart();
 
     setMotorPwm(m_homePwm);
@@ -181,7 +168,7 @@ void GantryAxisController::homeGantry()
 
 void GantryAxisController::jogGantry(int speedPwm)
 {
-    if (!m_connected) return;
+    if (!isIdentified()) return;
     m_state = State::Jogging;
     m_jogPwm = std::clamp(speedPwm, -MAX_PWM, MAX_PWM);
     setMotorPwm(m_jogPwm);
@@ -189,7 +176,7 @@ void GantryAxisController::jogGantry(int speedPwm)
 
 void GantryAxisController::stopJog()
 {
-    if (!m_connected) return;
+    if (!isIdentified()) return;
     // Also used as the general stop path for Pause/E-STOP, so unconditionally
     // halt the motor and cancel homing/tracking regardless of current state.
     if (m_state == State::StepTest || m_state == State::RelayTune || m_tunePhase != TunePhase::None) {
@@ -203,8 +190,8 @@ void GantryAxisController::stopJog()
 
 void GantryAxisController::resetEncoder()
 {
-    if (!m_connected) return;
-    sendCommand("r");
+    if (!isIdentified()) return;
+    if (m_link) m_link->send(axisproto::cmdZero(m_axisIndex));
     m_lastEncoderCount = 0;
     m_currentPositionMm = 0.0;
     emit positionChanged(m_currentPositionMm);
@@ -212,7 +199,7 @@ void GantryAxisController::resetEncoder()
 
 void GantryAxisController::tick(double targetMm)
 {
-    if (!m_connected || !m_isHomed) return;
+    if (!isIdentified() || !m_isHomed) return;
 
     // A tuning run owns the control loop. The UI already refuses to start one
     // while playback is active, but guard here too — two sources commanding
@@ -248,7 +235,7 @@ void GantryAxisController::startStepTest(double stepSizeUnits)
 {
     // Preconditions are also enforced in the UI (buttons stay disabled), but
     // re-checked here so nothing can drive the axis by calling this directly.
-    if (!m_connected) {
+    if (!isIdentified()) {
         emit errorOccurred("Step test needs the axis connected.");
         return;
     }
@@ -296,7 +283,7 @@ void GantryAxisController::startStepTest(double stepSizeUnits)
 
 void GantryAxisController::startAutoTune(double relayAmplitudePwm)
 {
-    if (!m_connected) {
+    if (!isIdentified()) {
         emit errorOccurred("Auto-tune needs the axis connected.");
         return;
     }
@@ -434,7 +421,7 @@ void GantryAxisController::abortTuning(const QString& reason)
     if (m_state != State::StepTest && m_state != State::RelayTune && m_tunePhase == TunePhase::None) {
         // Nothing running — still force PWM low, since this is the panic path
         // and being certain costs one serial write.
-        if (m_connected) setMotorPwm(0);
+        if (isIdentified()) setMotorPwm(0);
         return;
     }
 
@@ -585,30 +572,23 @@ void GantryAxisController::processClosedLoopForTuning()
 
 void GantryAxisController::heartbeat()
 {
-    if (!m_connected) return;
+    if (!isIdentified()) return;
 
-    // A query ('e' or 'h') expects exactly one reply; if it never arrives
-    // (dropped byte, noise) don't let the half-duplex link jam forever.
-    if (m_pendingQuery != PendingQuery::None) {
-        if (++m_pendingTicks > PENDING_TIMEOUT_TICKS) {
-            // Previously silent — an encoder query timing out during Tracking
-            // means the PID closed loop just ran (or is about to run) another
-            // tick against a stale m_currentPositionMm, up to PENDING_TIMEOUT_TICKS
-            // ticks old. Logged so intermittent serial drops during playback
-            // are diagnosable instead of just showing up as "inaccurate".
-            if (m_pendingQuery == PendingQuery::Encoder) {
-                StructuredLogger::instance().log(StructuredLogger::Category::Motion,
-                    "GantryAxisController",
-                    QString("Encoder query timed out (no response within %1ms) while in state %2 — "
-                            "position feedback is stale.")
-                        .arg(PENDING_TIMEOUT_TICKS * 20)
-                        .arg(m_state == State::Tracking ? "Tracking" :
-                             m_state == State::Jogging  ? "Jogging"  :
-                             m_state == State::Homing    ? "Homing"   : "Idle"));
-            }
-            m_pendingQuery = PendingQuery::None;
-            m_pendingTicks = 0;
-        }
+    // Staleness watch. Replies are self-identifying now, so nothing has to be
+    // held back waiting for an answer — but if answers stop arriving, the PID
+    // is running against an increasingly old position and the operator needs
+    // to know. This log line is what exposed a flaky link during
+    // commissioning, and during a tuning run it is the ISR-contention canary.
+    if (++m_ticksSinceEncoderReply > ENCODER_STALE_TICKS && !m_encoderStaleLogged) {
+        m_encoderStaleLogged = true;
+        StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+            "GantryAxisController",
+            QString("Encoder query timed out (no response within %1ms) while in state %2 — "
+                    "position feedback is stale.")
+                .arg(ENCODER_STALE_TICKS * 20)
+                .arg(m_state == State::Tracking ? "Tracking" :
+                     m_state == State::Jogging  ? "Jogging"  :
+                     m_state == State::Homing    ? "Homing"   : "Idle"));
     }
 
     switch (m_state) {
@@ -621,24 +601,19 @@ void GantryAxisController::heartbeat()
             emit errorOccurred("Gantry homing timed out — home switch not reached.");
             return;
         }
-        // Must keep resending, or the Arduino's own link/motor watchdog (500ms)
-        // zeroes the PWM mid-drive since 'h' polls don't count as motor commands.
+        // Must keep resending, or the Arduino's own motor watchdog (500ms)
+        // zeroes the PWM mid-drive — only a drive command refreshes it.
         setMotorPwm(m_homePwm);
-        if (m_pendingQuery == PendingQuery::None) {
-            sendCommand("h");
-            m_pendingQuery = PendingQuery::Home;
-            m_pendingTicks = 0;
+        if (!m_awaitingHomeReply && m_link) {
+            m_link->send(axisproto::cmdHome(m_axisIndex));
+            m_awaitingHomeReply = true;
         }
         break;
 
     case State::Jogging:
         // Resend so the Arduino's link-loss watchdog sees a live host.
         setMotorPwm(m_jogPwm);
-        if (m_pendingQuery == PendingQuery::None) {
-            sendCommand("e");
-            m_pendingQuery = PendingQuery::Encoder;
-            m_pendingTicks = 0;
-        }
+        if (m_link) m_link->send(axisproto::cmdQuery(m_axisIndex));
         break;
 
     case State::StepTest:
@@ -649,21 +624,13 @@ void GantryAxisController::heartbeat()
         bool stillRunning = (m_state == State::StepTest) ? serviceStepTest()
                                                           : serviceAutoTune();
         if (!stillRunning) return; // run ended (finished or aborted)
-        if (m_pendingQuery == PendingQuery::None) {
-            sendCommand("e");
-            m_pendingQuery = PendingQuery::Encoder;
-            m_pendingTicks = 0;
-        }
+        if (m_link) m_link->send(axisproto::cmdQuery(m_axisIndex));
         break;
     }
 
     case State::Idle:
     case State::Tracking:
-        if (m_pendingQuery == PendingQuery::None) {
-            sendCommand("e");
-            m_pendingQuery = PendingQuery::Encoder;
-            m_pendingTicks = 0;
-        }
+        if (m_link) m_link->send(axisproto::cmdQuery(m_axisIndex));
         break;
     }
 }
@@ -715,81 +682,70 @@ void GantryAxisController::processClosedLoop()
 void GantryAxisController::setMotorPwm(int pwm)
 {
     m_currentPwm = std::clamp(pwm, -MAX_PWM, MAX_PWM);
-    sendCommand("g " + QString::number(m_currentPwm));
+    if (m_link) m_link->send(axisproto::cmdPwm(m_axisIndex, m_currentPwm));
 }
 
-void GantryAxisController::sendCommand(const QString& cmd)
+void GantryAxisController::onReply(const axisproto::Reply& reply)
 {
-    if (!m_transport || !m_transport->isOpen()) return;
-    m_transport->write(cmd.toUtf8() + "\n");
-}
+    switch (reply.type) {
 
-void GantryAxisController::onReadyRead()
-{
-    m_readBuffer.append(m_transport->readAll());
-
-    while (m_readBuffer.contains('\n')) {
-        int idx = m_readBuffer.indexOf('\n');
-        QString line = QString::fromUtf8(m_readBuffer.left(idx)).trimmed();
-        m_readBuffer.remove(0, idx + 1);
-
-        if (!line.isEmpty()) {
-            handleResponse(line);
-        }
-    }
-}
-
-void GantryAxisController::handleResponse(const QString& response)
-{
-    PendingQuery query = m_pendingQuery;
-    m_pendingQuery = PendingQuery::None;
-    m_pendingTicks = 0;
-
-    switch (query) {
-    case PendingQuery::Encoder: {
+    case 'Q': {   // position, in raw encoder counts
+        if (reply.args.isEmpty()) break;
         bool ok = false;
-        long counts = response.toLong(&ok);
-        if (ok) {
-            m_lastEncoderCount = counts;
-            m_currentPositionMm = counts / m_countsPerMm;
-            m_ticksSinceEncoder = 0; // fresh reading — feedback watchdog satisfied
-            emit positionChanged(m_currentPositionMm);
-        }
-        break;
-    }
-    case PendingQuery::Home: {
-        if (response.trimmed() == "1") {
-            setMotorPwm(0);
-            sendCommand("r");
-            m_lastEncoderCount = 0;
-            m_currentPositionMm = 0.0;
-            m_targetPositionMm = 0.0;
-            m_isHomed = true;
-            m_state = State::Idle;
-            emit positionChanged(0.0);
-            emit homed();
-            qDebug() << "GantryAxisController: Homed.";
-        }
-        // else: switch not reached yet — heartbeat() will keep polling while Homing.
-        break;
-    }
-    case PendingQuery::Ping:
-    case PendingQuery::None:
-        break;
-    }
-}
+        long counts = reply.args.at(0).toLong(&ok);
+        if (!ok) break;
 
-void GantryAxisController::onTransportError(const QString& message, bool isFatal)
-{
-    QString msg = "Serial error: " + message;
-    StructuredLogger::instance().log(StructuredLogger::Category::Connection,
-        "GantryAxisController", msg);
-    emit errorOccurred(msg);
-    if (isFatal) {
-        // Unexpected loss of the device (unplugged, driver reset, ...) — this
-        // is a fault, not a user-requested disconnect, so it schedules an
-        // auto-reconnect (with backoff) instead of just going quiet.
-        teardownConnection();
-        m_stateMachine->notifyFault(msg);
+        m_lastEncoderCount  = counts;
+        m_currentPositionMm = counts / m_countsPerMm;
+
+        // Fresh reading — both the tuning feedback watchdog and the staleness
+        // diagnostic are satisfied.
+        m_ticksSinceEncoder      = 0;
+        m_ticksSinceEncoderReply = 0;
+        m_encoderStaleLogged     = false;
+
+        emit positionChanged(m_currentPositionMm);
+        break;
+    }
+
+    case 'H': {   // home switch state
+        m_awaitingHomeReply = false;
+        if (m_state != State::Homing) break;
+        if (reply.args.isEmpty() || reply.args.at(0) != "1") break;
+
+        setMotorPwm(0);
+        if (m_link) m_link->send(axisproto::cmdZero(m_axisIndex));
+        m_lastEncoderCount  = 0;
+        m_currentPositionMm = 0.0;
+        m_targetPositionMm  = 0.0;
+        m_isHomed = true;
+        m_state   = State::Idle;
+        emit positionChanged(0.0);
+        emit homed();
+        qDebug() << "GantryAxisController: Homed.";
+        break;
+    }
+
+    case '!': {   // asynchronous fault — arrives whenever the board decides
+        const int code = reply.args.isEmpty() ? 0 : reply.args.at(0).toInt();
+        const QString text = reply.args.size() > 1 ? reply.args.at(1) : QString("fault");
+
+        QString msg = QString("Axis board fault %1: %2").arg(code).arg(text);
+        StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+            "GantryAxisController", msg);
+        emit errorOccurred(msg);
+
+        // A halted board isn't going to honour anything further, so stop any
+        // tuning run rather than letting it time out confusingly.
+        if (m_state == State::StepTest || m_state == State::RelayTune) {
+            abortTuning(text);
+        }
+        break;
+    }
+
+    case 'S':   // status — polled for diagnostics; nothing acts on it yet
+    case 'A':
+    default:
+        break;
     }
 }

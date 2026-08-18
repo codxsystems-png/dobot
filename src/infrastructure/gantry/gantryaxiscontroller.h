@@ -12,25 +12,51 @@
 #include <QElapsedTimer>
 #include <algorithm>
 #include "core/types.h"
+#include "core/axis_protocol.h"
 #include "infrastructure/gantry/pid_controller.h"
 #include "infrastructure/gantry/serial_transport.h"
+#include "infrastructure/gantry/axis_board_link.h"
 #include "services/connection_state_machine.h"
 
-class GantryAxisController : public QObject
+/// DC-servo axis: host-side PID over PWM, position from a quadrature encoder.
+///
+/// Speaks the v2 axis protocol through an AxisBoardLink rather than owning a
+/// serial port, so several axes can share one Arduino. The link handles
+/// framing, the version handshake and reconnection; this class only cares
+/// about its own axis index.
+class GantryAxisController : public QObject, public IAxisReplyHandler
 {
     Q_OBJECT
 public:
-    // transport == nullptr uses the real QSerialPort-backed transport (or,
-    // if Qt6::SerialPort isn't available, a no-op transport that always
-    // fails to open). Tests pass a FakeSerialTransport instead — see
-    // src/infrastructure/gantry/fake_serial_transport.h.
+    /// Shares an existing board link with the other axes on that board.
+    /// The link must outlive this controller.
+    GantryAxisController(AxisBoardLink* link, int axisIndex, QObject* parent = nullptr);
+
+    /// Convenience for a single-axis rig (and for tests): builds and owns a
+    /// private link over `transport`. transport == nullptr uses the real
+    /// QSerialPort-backed one, or a no-op when Qt6::SerialPort is absent.
     explicit GantryAxisController(ISerialTransport* transport = nullptr, QObject* parent = nullptr);
+
     ~GantryAxisController() override;
 
     QStringList availablePorts() const;
-    bool isConnected() const { return m_connected; }
+
+    /// The port is open. NOT sufficient to command motion — see isIdentified().
+    bool isConnected() const;
+
+    /// The board answered the version handshake compatibly. Motion is gated on
+    /// this, because opening the port reboots an Uno and leaves ~1.6s where no
+    /// sketch is running.
+    bool isIdentified() const;
+
     bool isHomed() const { return m_isHomed; }
     double currentPositionMm() const { return m_currentPositionMm; }
+
+    int axisIndex() const { return m_axisIndex; }
+
+    /// Reply routing from the shared link (IAxisReplyHandler).
+    void onReply(const axisproto::Reply& reply) override;
+    void onLinkLost() override;
 
     void setEncoderCountsPerMm(double countsPerMm);
     double encoderCountsPerMm() const { return m_countsPerMm; }
@@ -54,7 +80,7 @@ public:
     void setPwmRampPerTick(int pwmPerTick) { m_pwmRampPerTick = std::clamp(pwmPerTick, 1, MAX_PWM); }
     int  pwmRampPerTick() const { return m_pwmRampPerTick; }
 
-    ConnectionStateMachine::State connectionState() const { return m_stateMachine->state(); }
+    ConnectionStateMachine::State connectionState() const;
 
 public slots:
     /// Apply the whole closed-loop configuration in one shot. Preferred over
@@ -127,14 +153,8 @@ signals:
     void positionChanged(double positionMm);
     void homed();
 
-private slots:
-    void onReadyRead();
-    void onTransportError(const QString& message, bool isFatal);
-    void onReconnectRequested();
-
 private:
-    void sendCommand(const QString& cmd);
-    void handleResponse(const QString& response);
+    void wireLink();
     void processClosedLoop();
     void setMotorPwm(int pwm);
 
@@ -149,19 +169,12 @@ private:
     /// the step test owns the loop while it runs.
     void processClosedLoopForTuning();
 
-    // Mechanical teardown only (close port, stop timer, reset flags) — used
-    // by disconnectPort() (user-initiated), connectPort()'s own pre-cleanup,
-    // and the fault path, each of which then decides separately what (if
-    // anything) to tell m_stateMachine.
-    void teardownConnection();
+    AxisBoardLink* m_link      = nullptr;
+    bool           m_ownsLink  = false;   // true when built from a transport
+    int            m_axisIndex = 0;
 
-    ConnectionStateMachine* m_stateMachine = nullptr;
-    QString m_lastPortName;
-
-    ISerialTransport* m_transport = nullptr;
     QTimer* m_controlTimer = nullptr;
 
-    bool m_connected = false;
     bool m_isHomed = false;
     double m_countsPerMm = 100.0;
 
@@ -268,11 +281,19 @@ private:
     static constexpr double SATURATION_ERROR_THRESHOLD_MM = 5.0;
     static constexpr int SATURATION_LOG_TICKS = 15; // ~300ms at 20ms/tick
 
-    // Half-duplex request/response tracking for 'e' / 'h' / 'p' queries
-    enum class PendingQuery { None, Encoder, Home, Ping };
-    PendingQuery m_pendingQuery = PendingQuery::None;
-    int m_pendingTicks = 0;
-    static constexpr int PENDING_TIMEOUT_TICKS = 10; // 200ms at 20ms tick rate
+    // v2 replies are self-identifying, so there is no longer a one-outstanding
+    // -query rule to enforce — a position query can go out every tick and be
+    // matched by its type when it comes back.
+    //
+    // What must survive from the old PendingQuery machinery is the staleness
+    // diagnostic: how long since a real position reading arrived. That log
+    // line is what exposed a flaky link during commissioning, and during a
+    // tuning run it is the ISR-contention canary.
+    int  m_ticksSinceEncoderReply = 0;
+    bool m_encoderStaleLogged     = false;
+    static constexpr int ENCODER_STALE_TICKS = 10;  // 200ms at 20ms tick rate
 
-    QByteArray m_readBuffer;
+    /// Set while awaiting a home-switch answer, so homing only advances on a
+    /// real reply rather than on any traffic.
+    bool m_awaitingHomeReply = false;
 };

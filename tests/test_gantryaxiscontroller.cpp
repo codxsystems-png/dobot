@@ -7,6 +7,24 @@
 #include "infrastructure/gantry/gantryaxiscontroller.h"
 #include "infrastructure/gantry/fake_serial_transport.h"
 
+namespace {
+
+const QString kVersionReply = "V FW=2 PROTO=2 BOARD=UNO AXES=1 CAPS=DC";
+
+/// Opens the port AND completes the version handshake.
+///
+/// connectPort() alone only opens the port. Motion is gated on the board
+/// having identified itself, because opening the port asserts DTR and reboots
+/// an Uno — for ~1.6s there is no sketch running to talk to.
+void bringUp(GantryAxisController& gantry, FakeSerialTransport* fake)
+{
+    gantry.connectPort("COM_FAKE");
+    fake->pushIncomingLine(kVersionReply);
+    fake->emitReadyRead();
+}
+
+} // namespace
+
 class TestGantryAxisController : public QObject
 {
     Q_OBJECT
@@ -40,7 +58,7 @@ private slots:
         GantryAxisController gantry(fake);
         QSignalSpy homedSpy(&gantry, &GantryAxisController::homed);
 
-        QVERIFY(gantry.connectPort("COM_FAKE"));
+        bringUp(gantry, fake);
         QVERIFY(!gantry.isHomed());
 
         gantry.homeGantry();
@@ -48,7 +66,7 @@ private slots:
         QVERIFY(fake->wasPwmCommandSent(-100)); // default m_homePwm
 
         // Simulate the Arduino reporting the home switch has been reached.
-        fake->pushIncomingLine("1");
+        fake->pushIncomingLine("H 0 1");
         fake->emitReadyRead();
 
         QVERIFY(gantry.isHomed());
@@ -61,10 +79,10 @@ private slots:
     {
         auto* fake = new FakeSerialTransport();
         GantryAxisController gantry(fake);
-        gantry.connectPort("COM_FAKE");
+        bringUp(gantry, fake);
         gantry.homeGantry();
         gantry.heartbeat();
-        fake->pushIncomingLine("1");
+        fake->pushIncomingLine("H 0 1");
         fake->emitReadyRead();
         QVERIFY(gantry.isHomed());
 
@@ -80,10 +98,10 @@ private slots:
     {
         auto* fake = new FakeSerialTransport();
         GantryAxisController gantry(fake);
-        gantry.connectPort("COM_FAKE");
+        bringUp(gantry, fake);
         gantry.homeGantry();
         gantry.heartbeat();
-        fake->pushIncomingLine("1");
+        fake->pushIncomingLine("H 0 1");
         fake->emitReadyRead();
 
         QSignalSpy errorSpy(&gantry, &GantryAxisController::errorOccurred);
@@ -110,16 +128,16 @@ private slots:
         gantry.setEncoderCountsPerMm(1000.0);
         QCOMPARE(gantry.encoderCountsPerMm(), 1000.0);
 
-        gantry.connectPort("COM_FAKE");
+        bringUp(gantry, fake);
         gantry.homeGantry();
         gantry.heartbeat();
-        fake->pushIncomingLine("1");
+        fake->pushIncomingLine("H 0 1");
         fake->emitReadyRead();
         QVERIFY(gantry.isHomed());
 
         // Ask for the encoder, then have the Arduino report 5000 raw counts.
         gantry.heartbeat();
-        fake->pushIncomingLine("5000");
+        fake->pushIncomingLine("Q 0 5000");
         fake->emitReadyRead();
 
         // 5000 counts / 1000 counts-per-mm == 5mm. At the old hardcoded 100.0
@@ -155,10 +173,10 @@ private slots:
         GantryLimits limits; limits.minMm = -50.0; limits.maxMm = 50.0;
         gantry.setTravelLimits(limits);
 
-        gantry.connectPort("COM_FAKE");
+        bringUp(gantry, fake);
         gantry.homeGantry();
         gantry.heartbeat();
-        fake->pushIncomingLine("1");
+        fake->pushIncomingLine("H 0 1");
         fake->emitReadyRead();
 
         QSignalSpy errorSpy(&gantry, &GantryAxisController::errorOccurred);
@@ -176,16 +194,66 @@ private slots:
         auto* fake = new FakeSerialTransport();
         GantryAxisController gantry(fake);
         gantry.setPwmRampPerTick(40); // default is 15
-        gantry.connectPort("COM_FAKE");
+        bringUp(gantry, fake);
         gantry.homeGantry();
         gantry.heartbeat();
-        fake->pushIncomingLine("1");
+        fake->pushIncomingLine("H 0 1");
         fake->emitReadyRead();
 
         fake->clearWrittenCommands();
         gantry.tick(50.0);
 
         QVERIFY2(fake->wasPwmCommandSent(40), "ramp limit is not configurable");
+    }
+
+    // ─── v2 protocol behaviour ────────────────────────────────────────────
+
+    void testMotionRefusedUntilBoardIdentifiesItself()
+    {
+        // Opening the port reboots an Uno; for ~1.6s there is no sketch to
+        // talk to. Commanding motion on "port opened" alone would mean every
+        // connect drives into a bootloader.
+        auto* fake = new FakeSerialTransport();
+        GantryAxisController gantry(fake);
+
+        QVERIFY(gantry.connectPort("COM_FAKE"));
+        QVERIFY(gantry.isConnected());
+        QVERIFY2(!gantry.isIdentified(), "must not be usable before the handshake");
+
+        fake->clearWrittenCommands();
+        gantry.homeGantry();
+        QVERIFY2(!fake->wasPwmCommandSent(-100),
+                 "homing must not drive the motor before the board identifies");
+
+        // Board finally answers; now motion is allowed.
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+        QVERIFY(gantry.isIdentified());
+
+        gantry.homeGantry();
+        QVERIFY(fake->wasPwmCommandSent(-100));
+    }
+
+    void testUnsolicitedFaultDoesNotCorruptAPendingPositionRead()
+    {
+        // The v1 regression, directly: replies were matched positionally
+        // against the outstanding query, so a fault arriving mid-poll was
+        // consumed as the position and silently corrupted it.
+        auto* fake = new FakeSerialTransport();
+        GantryAxisController gantry(fake);
+        gantry.setEncoderCountsPerMm(100.0);
+        bringUp(gantry, fake);
+        gantry.homeGantry();
+        gantry.heartbeat();
+        fake->pushIncomingLine("H 0 1");
+        fake->emitReadyRead();
+
+        gantry.heartbeat();
+        fake->pushIncomingLine("! 0 3 limit");   // arrives before the answer
+        fake->pushIncomingLine("Q 0 2500");
+        fake->emitReadyRead();
+
+        QCOMPARE(gantry.currentPositionMm(), 25.0);
     }
 
     void testFatalTransportErrorTearsDownAndSchedulesReconnect()

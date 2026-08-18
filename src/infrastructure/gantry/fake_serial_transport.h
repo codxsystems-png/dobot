@@ -78,15 +78,13 @@ public:
         return out;
     }
 
-    /// Convenience: has a drive command been sent with this exact value?
-    ///
-    /// Still the v1 wire format ("g <pwm>"), because GantryAxisController
-    /// still emits v1. It becomes "G <axis> <pwm>" in the same change that
-    /// migrates the controller to the v2 protocol — flipping it earlier just
-    /// breaks three assertions against a controller that hasn't moved yet.
-    bool wasPwmCommandSent(int pwm) const {
-        return m_writtenCommands.contains(QString("g %1").arg(pwm));
+    /// Convenience: has a "G <axis> <pwm>" drive command been sent?
+    bool wasPwmCommandSent(int axis, int pwm) const {
+        return m_writtenCommands.contains(QString("G %1 %2").arg(axis).arg(pwm));
     }
+
+    /// Single-argument form, for the common case of the axis-0 DC drive.
+    bool wasPwmCommandSent(int pwm) const { return wasPwmCommandSent(0, pwm); }
 
 private:
     bool m_open = false;
