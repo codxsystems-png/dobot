@@ -70,6 +70,12 @@ target_sources(test_step_response_metrics PRIVATE
     ${CMAKE_SOURCE_DIR}/src/core/step_response_metrics.cpp
 )
 
+# Test: Axis Board Protocol v2 (axis-addressed wire format, tagged replies)
+add_cambot_test(test_axis_protocol test_axis_protocol.cpp)
+target_sources(test_axis_protocol PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
+)
+
 # Test: Relay Auto-Tune (Astrom-Hagglund Ku/Tu extraction -> TL/ZN mapping)
 add_cambot_test(test_relay_tune test_relay_tune.cpp)
 target_sources(test_relay_tune PRIVATE

@@ -50,6 +50,7 @@ set(CORE_SOURCES
     src/core/motion_estimator.cpp
     src/core/step_response_metrics.cpp
     src/core/relay_tune.cpp
+    src/core/axis_protocol.cpp
 )
 
 set(NETWORK_SOURCES
