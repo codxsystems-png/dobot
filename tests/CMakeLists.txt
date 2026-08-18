@@ -124,6 +124,7 @@ target_sources(test_timeline_compiler PRIVATE
     ${CMAKE_SOURCE_DIR}/src/models/segments_model.cpp
     ${CMAKE_SOURCE_DIR}/src/application/gantryservice.cpp
     ${CMAKE_SOURCE_DIR}/src/application/fizservice.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
     ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
@@ -138,6 +139,7 @@ target_sources(test_timeline_compiler PRIVATE
 # Test: Gantry Axis Controller (Phase 7: via FakeSerialTransport, no hardware)
 add_cambot_test(test_gantryaxiscontroller test_gantryaxiscontroller.cpp)
 target_sources(test_gantryaxiscontroller PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
     ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp

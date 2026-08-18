@@ -14,77 +14,39 @@
 #endif
 
 GantryAxisController::GantryAxisController(AxisBoardLink* link, int axisIndex, QObject* parent)
-    : QObject(parent)
-    , m_link(link)
-    , m_ownsLink(false)
-    , m_axisIndex(axisIndex)
+    : AxisControllerBase(link, axisIndex, parent)
 {
-    wireLink();
 }
 
 GantryAxisController::GantryAxisController(ISerialTransport* transport, QObject* parent)
-    : QObject(parent)
-    , m_link(new AxisBoardLink(transport, this))
-    , m_ownsLink(true)
-    , m_axisIndex(0)
+    : AxisControllerBase(transport, parent)
 {
-    wireLink();
 }
 
-void GantryAxisController::wireLink()
+void GantryAxisController::resetControlState()
 {
-    if (!m_link) return;
-
-    m_link->registerAxis(m_axisIndex, this);
-
-    // Relay the link's connection signals so existing consumers (MainWindow,
-    // TeachPanel, the tuning dialog) keep working unchanged.
-    connect(m_link, &AxisBoardLink::connected,     this, &GantryAxisController::connected);
-    connect(m_link, &AxisBoardLink::disconnected,  this, &GantryAxisController::disconnected);
-    connect(m_link, &AxisBoardLink::errorOccurred, this, &GantryAxisController::errorOccurred);
-
-    // The board reboots when the port opens, so the control loop only starts
-    // once it has actually identified itself.
-    connect(m_link, &AxisBoardLink::identified, this, [this](const axisproto::VersionInfo&) {
-        if (m_controlTimer) m_controlTimer->start(20);
-    });
+    m_state      = State::Idle;
+    m_currentPwm = 0;
+    m_ticksSinceEncoderReply = 0;
+    m_encoderStaleLogged     = false;
+    m_awaitingHomeReply      = false;
 }
 
-GantryAxisController::~GantryAxisController()
+void GantryAxisController::onLinkLostImpl()
 {
-    if (m_link) m_link->unregisterAxis(m_axisIndex);
-    if (m_controlTimer) m_controlTimer->stop();
-}
+    // Losing the link mid-tuning means no feedback and no way to stop the
+    // motor over serial — cancel the run while an explicit stop can still
+    // get out. The base tears the loop down after this returns.
+    if (m_state == State::StepTest || m_state == State::RelayTune || m_tunePhase != TunePhase::None) {
+        abortTuning("connection closed");
+    }
 
-QStringList GantryAxisController::availablePorts() const
-{
-    return m_link ? m_link->availablePorts() : QStringList{};
-}
-
-bool GantryAxisController::isConnected() const
-{
-    return m_link && m_link->isConnected();
-}
-
-bool GantryAxisController::isIdentified() const
-{
-    return m_link && m_link->isIdentified();
-}
-
-ConnectionStateMachine::State GantryAxisController::connectionState() const
-{
-    return m_link ? m_link->connectionState() : ConnectionStateMachine::State::Disconnected;
-}
-
-void GantryAxisController::setEncoderCountsPerMm(double countsPerMm)
-{
-    m_countsPerMm = qMax(0.1, countsPerMm);
+    resetControlState();
 }
 
 void GantryAxisController::applyTuning(const GantryTuning& tuning)
 {
-    setEncoderCountsPerMm(tuning.countsPerUnit);
-    setTravelLimits(tuning.travelLimits);
+    AxisControllerBase::applyTuning(tuning);   // calibration + travel limits
     setPidGains(tuning.pidKp, tuning.pidKi, tuning.pidKd);
     setPwmRampPerTick(tuning.pwmRampPerTick);
 
@@ -105,52 +67,6 @@ void GantryAxisController::applyTuning(const GantryTuning& tuning)
             .arg(tuning.pidKp, 0, 'f', 4)
             .arg(tuning.pidKi, 0, 'f', 4)
             .arg(tuning.pidKd, 0, 'f', 4));
-}
-
-bool GantryAxisController::connectPort(const QString& portName)
-{
-    if (!m_link) return false;
-
-    m_isHomed    = false;
-    m_state      = State::Idle;
-    m_currentPwm = 0;
-    m_ticksSinceEncoderReply = 0;
-    m_encoderStaleLogged     = false;
-    m_awaitingHomeReply      = false;
-
-    if (!m_controlTimer) {
-        m_controlTimer = new QTimer(this);
-        connect(m_controlTimer, &QTimer::timeout, this, &GantryAxisController::heartbeat);
-    }
-    // Deliberately NOT started here — the loop starts on AxisBoardLink's
-    // identified() signal (see wireLink()). Opening the port reboots an Uno,
-    // so polling immediately would just talk to a bootloader.
-
-    // We do not drive the motor here. We wait for the user to explicitly Home
-    // the gantry before any motion command is honored (see tick()).
-    return m_link->connectPort(portName);
-}
-
-void GantryAxisController::disconnectPort()
-{
-    if (m_link) m_link->disconnectPort();
-}
-
-void GantryAxisController::onLinkLost()
-{
-    // Losing the link mid-tuning means no feedback and no way to stop the
-    // motor over serial — cancel the run while an explicit stop can still
-    // get out.
-    if (m_state == State::StepTest || m_state == State::RelayTune || m_tunePhase != TunePhase::None) {
-        abortTuning("connection closed");
-    }
-
-    if (m_controlTimer) m_controlTimer->stop();
-
-    // Position is no longer trustworthy and the origin is gone with it.
-    m_isHomed    = false;
-    m_state      = State::Idle;
-    m_currentPwm = 0;
 }
 
 void GantryAxisController::homeGantry()
@@ -208,14 +124,7 @@ void GantryAxisController::tick(double targetMm)
 
     // Runtime safety net — clamp before the target ever reaches the closed
     // loop, regardless of whether the caller already validated it upstream.
-    double clampedMm = std::clamp(targetMm, m_travelLimits.minMm, m_travelLimits.maxMm);
-    if (clampedMm != targetMm) {
-        QString msg = QString("Gantry target %1mm clamped to travel limit %2mm")
-                          .arg(targetMm, 0, 'f', 1).arg(clampedMm, 0, 'f', 1);
-        StructuredLogger::instance().log(StructuredLogger::Category::Safety,
-            "GantryAxisController", msg);
-        emit errorOccurred(msg);
-    }
+    double clampedMm = clampToTravel(targetMm);
 
     if (m_state != State::Homing && m_state != State::Jogging) {
         if (m_state != State::Tracking) {

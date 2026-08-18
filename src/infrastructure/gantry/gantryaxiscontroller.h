@@ -14,58 +14,27 @@
 #include "core/types.h"
 #include "core/axis_protocol.h"
 #include "infrastructure/gantry/pid_controller.h"
-#include "infrastructure/gantry/serial_transport.h"
-#include "infrastructure/gantry/axis_board_link.h"
-#include "services/connection_state_machine.h"
+#include "infrastructure/gantry/axis_controller_base.h"
 
 /// DC-servo axis: host-side PID over PWM, position from a quadrature encoder.
 ///
-/// Speaks the v2 axis protocol through an AxisBoardLink rather than owning a
-/// serial port, so several axes can share one Arduino. The link handles
-/// framing, the version handshake and reconnection; this class only cares
-/// about its own axis index.
-class GantryAxisController : public QObject, public IAxisReplyHandler
+/// Everything to do with the board link, calibration, travel limits and the
+/// 50Hz loop lives in AxisControllerBase. What is here is specific to this
+/// drive kind: the PID, the PWM ramp limiter, limit-switch homing, and the
+/// step-test / relay auto-tune machinery — none of which mean anything for a
+/// stepper whose driver closes its own loop.
+class GantryAxisController : public AxisControllerBase
 {
     Q_OBJECT
 public:
     /// Shares an existing board link with the other axes on that board.
-    /// The link must outlive this controller.
     GantryAxisController(AxisBoardLink* link, int axisIndex, QObject* parent = nullptr);
 
-    /// Convenience for a single-axis rig (and for tests): builds and owns a
-    /// private link over `transport`. transport == nullptr uses the real
-    /// QSerialPort-backed one, or a no-op when Qt6::SerialPort is absent.
+    /// Convenience for a single-axis rig (and for tests): owns a private link.
     explicit GantryAxisController(ISerialTransport* transport = nullptr, QObject* parent = nullptr);
-
-    ~GantryAxisController() override;
-
-    QStringList availablePorts() const;
-
-    /// The port is open. NOT sufficient to command motion — see isIdentified().
-    bool isConnected() const;
-
-    /// The board answered the version handshake compatibly. Motion is gated on
-    /// this, because opening the port reboots an Uno and leaves ~1.6s where no
-    /// sketch is running.
-    bool isIdentified() const;
-
-    bool isHomed() const { return m_isHomed; }
-    double currentPositionMm() const { return m_currentPositionMm; }
-
-    int axisIndex() const { return m_axisIndex; }
 
     /// Reply routing from the shared link (IAxisReplyHandler).
     void onReply(const axisproto::Reply& reply) override;
-    void onLinkLost() override;
-
-    void setEncoderCountsPerMm(double countsPerMm);
-    double encoderCountsPerMm() const { return m_countsPerMm; }
-
-    // Runtime safety net: tick() clamps any requested target to this range
-    // before it ever reaches the closed loop, independent of whatever
-    // preflight validation the caller did (or didn't) do upstream.
-    void setTravelLimits(const GantryLimits& limits) { m_travelLimits = limits; }
-    GantryLimits travelLimits() const { return m_travelLimits; }
 
     // PID gains for the position closed loop (PWM output, in encoder-mm error
     // units). Defaults below are a conservative starting point carried over
@@ -80,28 +49,19 @@ public:
     void setPwmRampPerTick(int pwmPerTick) { m_pwmRampPerTick = std::clamp(pwmPerTick, 1, MAX_PWM); }
     int  pwmRampPerTick() const { return m_pwmRampPerTick; }
 
-    ConnectionStateMachine::State connectionState() const;
-
 public slots:
     /// Apply the whole closed-loop configuration in one shot. Preferred over
     /// the individual setters when coming from another thread, so the control
     /// loop can't run a tick with new gains against old limits.
-    void applyTuning(const GantryTuning& tuning);
+    void applyTuning(const GantryTuning& tuning) override;
 
-    bool connectPort(const QString& portName);
-    void disconnectPort();
-
-    // Commands
-    void homeGantry();
-    void jogGantry(int speedPwm);
-    void stopJog();
-    void resetEncoder();
-
-    // Called periodically by GantryService during playback / holding
-    void tick(double targetMm);
-
-    // Fallback heartbeat for when playback tick isn't running (e.g. idle)
-    void heartbeat();
+    // ─── The DC control model (AxisControllerBase) ────────────────────────
+    void homeGantry() override;
+    void jogGantry(int speedPwm) override;
+    void stopJog() override;
+    void resetEncoder() override;
+    void tick(double targetMm) override;
+    void heartbeat() override;
 
     // ─── PID tuning ───────────────────────────────────────────────────────
     // These deliberately drive the axis. Every one of them is gated on the
@@ -147,14 +107,11 @@ signals:
     void autoTuneFinished(double relayAmplitudePwm, double centreUnits);
     void tuningAborted(const QString& reason);
 
-    void connected(const QString& portName);
-    void disconnected();
-    void errorOccurred(const QString& message);
-    void positionChanged(double positionMm);
-    void homed();
+protected:
+    void onLinkLostImpl() override;
+    void resetControlState() override;
 
 private:
-    void wireLink();
     void processClosedLoop();
     void setMotorPwm(int pwm);
 
@@ -168,15 +125,6 @@ private:
     /// The tracking PID without processClosedLoop()'s State::Tracking guard —
     /// the step test owns the loop while it runs.
     void processClosedLoopForTuning();
-
-    AxisBoardLink* m_link      = nullptr;
-    bool           m_ownsLink  = false;   // true when built from a transport
-    int            m_axisIndex = 0;
-
-    QTimer* m_controlTimer = nullptr;
-
-    bool m_isHomed = false;
-    double m_countsPerMm = 100.0;
 
     enum class State {
         Idle,
@@ -248,11 +196,10 @@ private:
     static constexpr double TUNE_MARGIN_FRACTION   = 0.10; // of total travel span
     static constexpr int    TUNE_STEP_CAPTURE_MS   = 4000;
 
-    // Tracking
-    double m_currentPositionMm = 0.0;
+    // Tracking. m_currentPositionMm and m_travelLimits live in the base —
+    // every axis kind has a measured position and a travel range.
     double m_targetPositionMm = 0.0;
     long m_lastEncoderCount = 0;
-    GantryLimits m_travelLimits;
 
     // Homing
     int m_homePwm = -100;
