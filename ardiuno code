@@ -1,5 +1,12 @@
 /***************************************************************
- * CamBotTimeline — Gantry Axis Firmware
+ * CamBotTimeline — Gantry Axis Firmware  [v1 — SUPERSEDED]
+ *
+ * The current firmware is firmware/cambot_axis_v2/cambot_axis_v2.ino,
+ * which speaks the axis-addressed v2 protocol at 115200 baud and
+ * supports more than one axis. This file is kept only as a rollback
+ * path: it pairs with app builds from before the v2 protocol landed.
+ * Flashing this while running a v2 host (or vice versa) will fail the
+ * version handshake — which is deliberate.
  *
  * Closed-loop DC motor position control for a single linear
  * gantry axis. The Qt-side GantryAxisController drives this over

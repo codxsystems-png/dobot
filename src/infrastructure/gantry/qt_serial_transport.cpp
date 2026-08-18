@@ -10,7 +10,10 @@ QtSerialTransport::QtSerialTransport(QObject* parent)
     : ISerialTransport(parent)
 {
     m_serial = new QSerialPort(this);
-    m_serial->setBaudRate(9600);
+    // Must match firmware/cambot_axis_v2/cambot_axis_v2.ino. 9600 cannot
+    // carry two axes: one character costs 1.04ms there, so a single 20ms
+    // tick's traffic for two axes exceeds the tick itself.
+    m_serial->setBaudRate(115200);
     m_serial->setDataBits(QSerialPort::Data8);
     m_serial->setStopBits(QSerialPort::OneStop);
     m_serial->setParity(QSerialPort::NoParity);

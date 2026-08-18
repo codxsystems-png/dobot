@@ -76,6 +76,18 @@ target_sources(test_axis_protocol PRIVATE
     ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
 )
 
+# Test: Axis Board Link (one serial port multiplexed between several axes)
+add_cambot_test(test_axis_board_link test_axis_board_link.cpp)
+target_sources(test_axis_board_link PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/qt_serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/fake_serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
+)
+
 # Test: Relay Auto-Tune (Astrom-Hagglund Ku/Tu extraction -> TL/ZN mapping)
 add_cambot_test(test_relay_tune test_relay_tune.cpp)
 target_sources(test_relay_tune PRIVATE

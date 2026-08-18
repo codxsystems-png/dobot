@@ -63,7 +63,27 @@ public:
     QStringList writtenCommands() const { return m_writtenCommands; }
     void clearWrittenCommands() { m_writtenCommands.clear(); }
 
-    /// Convenience: has a "g <pwm>" command been sent with this exact value?
+    /// Has this exact command line been sent?
+    bool wasCommandSent(const QString& exact) const {
+        return m_writtenCommands.contains(exact);
+    }
+
+    /// Every sent command starting with `prefix` — useful for asserting on a
+    /// family of commands without pinning their arguments.
+    QStringList commandsMatching(const QString& prefix) const {
+        QStringList out;
+        for (const QString& c : m_writtenCommands) {
+            if (c.startsWith(prefix)) out.append(c);
+        }
+        return out;
+    }
+
+    /// Convenience: has a drive command been sent with this exact value?
+    ///
+    /// Still the v1 wire format ("g <pwm>"), because GantryAxisController
+    /// still emits v1. It becomes "G <axis> <pwm>" in the same change that
+    /// migrates the controller to the v2 protocol — flipping it earlier just
+    /// breaks three assertions against a controller that hasn't moved yet.
     bool wasPwmCommandSent(int pwm) const {
         return m_writtenCommands.contains(QString("g %1").arg(pwm));
     }

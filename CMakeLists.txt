@@ -137,6 +137,7 @@ set(FIZ_SOURCES
 # Phase 8 — Gantry
 set(GANTRY_SOURCES
     src/infrastructure/gantry/gantryaxiscontroller.cpp
+    src/infrastructure/gantry/axis_board_link.cpp
     src/infrastructure/gantry/serial_transport.cpp
     src/infrastructure/gantry/qt_serial_transport.cpp
     src/application/gantryservice.cpp
