@@ -183,7 +183,9 @@ void TeachPanel::createCartesianJogGroup()
 
 void TeachPanel::createGantryJogGroup()
 {
-    m_gantryGroup = new QGroupBox("Linear Gantry");
+    // Named for the board, not for one axis: the port and Connect button below
+    // serve every axis on it.
+    m_gantryGroup = new QGroupBox("External Axes");
     QGridLayout* grid = new QGridLayout(m_gantryGroup);
     grid->setSpacing(4);
     grid->setContentsMargins(8, 16, 8, 8);
@@ -227,11 +229,32 @@ void TeachPanel::createGantryJogGroup()
     grid->addWidget(m_gantryPortCombo, 0, 0, 1, 2);
     grid->addWidget(m_gantryConnectBtn, 0, 2);
 
+    // Row 0b: which axis the controls below drive. One board, one port, but
+    // the jog/home/position block applies to exactly one axis at a time.
+    m_axisSelectCombo = new QComboBox();
+    m_axisSelectCombo->setMinimumHeight(26);
+    m_axisSelectCombo->addItem("Gantry", "gantry");
+    m_axisIds = { "gantry" };
+    connect(m_axisSelectCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+                const QString id = selectedAxisId();
+                // The readout belongs to the previously selected axis; blank it
+                // rather than leaving another axis's number under a new label.
+                if (m_gantryPosLabel) m_gantryPosLabel->setText("[ --- ]");
+                emit axisSelectionChanged(id);
+            });
+    QLabel* axisLabel = new QLabel("Axis:");
+    axisLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    grid->addWidget(axisLabel, 1, 0);
+    grid->addWidget(m_axisSelectCombo, 1, 1, 1, 2);
+
     // Row 1: Home Button and Position Label
     m_gantryHomeBtn = new QPushButton("Home Gantry");
     m_gantryHomeBtn->setMinimumHeight(32);
     connect(m_gantryHomeBtn, &QPushButton::clicked, this, [this]() {
-        emit gantryHomeRequested();
+        const QString id = selectedAxisId();
+        emit axisHomeRequested(id);
+        if (id == "gantry") emit gantryHomeRequested();
     });
     
     m_gantryPosLabel = new QLabel("[ 0.0 mm ]");
@@ -239,8 +262,8 @@ void TeachPanel::createGantryJogGroup()
     m_gantryPosLabel->setStyleSheet("font-weight: bold; color: #55aaff; background: #222; border-radius: 4px;");
     m_gantryPosLabel->setMinimumHeight(32);
 
-    grid->addWidget(m_gantryHomeBtn, 1, 0);
-    grid->addWidget(m_gantryPosLabel, 1, 1, 1, 2);
+    grid->addWidget(m_gantryHomeBtn, 2, 0);
+    grid->addWidget(m_gantryPosLabel, 2, 1, 1, 2);
 
     // Row 2: Jog controls
     QLabel* label = new QLabel("GANTRY");
@@ -250,18 +273,34 @@ void TeachPanel::createGantryJogGroup()
     m_gantryJogNeg = new QPushButton("<");
     m_gantryJogNeg->setFixedSize(48, 36);
     m_gantryJogNeg->setFocusPolicy(Qt::NoFocus);
-    connect(m_gantryJogNeg, &QPushButton::pressed, this, [this]() { emit gantryJogRequested(-m_gantryPwm); });
-    connect(m_gantryJogNeg, &QPushButton::released, this, &TeachPanel::gantryJogStopRequested);
+    connect(m_gantryJogNeg, &QPushButton::pressed, this, [this]() {
+        const QString id = selectedAxisId();
+        emit axisJogRequested(id, -m_gantryPwm);
+        if (id == "gantry") emit gantryJogRequested(-m_gantryPwm);
+    });
+    connect(m_gantryJogNeg, &QPushButton::released, this, [this]() {
+        const QString id = selectedAxisId();
+        emit axisJogStopRequested(id);
+        if (id == "gantry") emit gantryJogStopRequested();
+    });
 
     m_gantryJogPos = new QPushButton(">");
     m_gantryJogPos->setFixedSize(48, 36);
     m_gantryJogPos->setFocusPolicy(Qt::NoFocus);
-    connect(m_gantryJogPos, &QPushButton::pressed, this, [this]() { emit gantryJogRequested(m_gantryPwm); });
-    connect(m_gantryJogPos, &QPushButton::released, this, &TeachPanel::gantryJogStopRequested);
+    connect(m_gantryJogPos, &QPushButton::pressed, this, [this]() {
+        const QString id = selectedAxisId();
+        emit axisJogRequested(id, m_gantryPwm);
+        if (id == "gantry") emit gantryJogRequested(m_gantryPwm);
+    });
+    connect(m_gantryJogPos, &QPushButton::released, this, [this]() {
+        const QString id = selectedAxisId();
+        emit axisJogStopRequested(id);
+        if (id == "gantry") emit gantryJogStopRequested();
+    });
 
-    grid->addWidget(m_gantryJogNeg, 2, 0, Qt::AlignRight);
-    grid->addWidget(label, 2, 1);
-    grid->addWidget(m_gantryJogPos, 2, 2, Qt::AlignLeft);
+    grid->addWidget(m_gantryJogNeg, 3, 0, Qt::AlignRight);
+    grid->addWidget(label, 3, 1);
+    grid->addWidget(m_gantryJogPos, 3, 2, Qt::AlignLeft);
 
     // Row 3: Speed selector
     QLabel* speedLabel = new QLabel("Speed:");
@@ -278,8 +317,8 @@ void TeachPanel::createGantryJogGroup()
         m_gantryPwm = m_gantrySpeedCombo->itemData(idx).toInt();
     });
 
-    grid->addWidget(speedLabel, 3, 0);
-    grid->addWidget(m_gantrySpeedCombo, 3, 1, 1, 2);
+    grid->addWidget(speedLabel, 4, 0);
+    grid->addWidget(m_gantrySpeedCombo, 4, 1, 1, 2);
 
     // Row 4: Record Path — captures continuous hand-jogged motion instead
     // of only discrete taught points (see PathRecorderService).
@@ -343,6 +382,46 @@ void TeachPanel::setRobotConnected(bool connected)
     m_dragBtn->setEnabled(connected);
     m_jogGroup->setEnabled(connected);
     m_cartesianGroup->setEnabled(connected);
+}
+
+QString TeachPanel::selectedAxisId() const
+{
+    if (!m_axisSelectCombo || m_axisSelectCombo->count() == 0) return "gantry";
+    return m_axisSelectCombo->currentData().toString();
+}
+
+void TeachPanel::setAxes(const QStringList& axisIds, const QStringList& displayNames)
+{
+    if (!m_axisSelectCombo || axisIds.isEmpty()) return;
+
+    // Preserve the operator's selection across a rebuild where possible —
+    // reconfiguring an unrelated axis should not silently move the jog
+    // controls onto a different motor.
+    const QString previous = selectedAxisId();
+
+    QSignalBlocker block(m_axisSelectCombo);
+    m_axisSelectCombo->clear();
+    m_axisIds = axisIds;
+    for (int i = 0; i < axisIds.size(); ++i) {
+        const QString name = (i < displayNames.size() && !displayNames[i].isEmpty())
+                                 ? displayNames[i] : axisIds[i];
+        m_axisSelectCombo->addItem(name, axisIds[i]);
+    }
+
+    const int idx = m_axisSelectCombo->findData(previous);
+    m_axisSelectCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+
+    // Only one axis: the selector is noise, so hide it rather than show a
+    // one-entry dropdown.
+    m_axisSelectCombo->setVisible(axisIds.size() > 1);
+}
+
+void TeachPanel::updateAxisPosition(const QString& axisId, double pos)
+{
+    // Every axis reports position independently. Showing whichever arrived
+    // last would make the readout flicker between motors.
+    if (axisId != selectedAxisId()) return;
+    updateGantryPosition(pos);
 }
 
 void TeachPanel::setGantryConnected(bool connected)

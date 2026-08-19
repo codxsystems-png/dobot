@@ -712,37 +712,54 @@ void MainWindow::createConnections()
     // Routed through m_axisController rather than bound to one controller by
     // name: with a stepper selected, a jog wired straight to the DC controller
     // would drive the WRONG MOTOR while the readout showed the wrong axis.
-    connect(m_teachPanel, &TeachPanel::gantryJogRequested, this, [this](int speed) {
-        if (!m_axisController) return;
-        AxisControllerBase* axis = m_axisController;
+    connect(m_teachPanel, &TeachPanel::axisJogRequested, this,
+            [this](const QString& axisId, int speed) {
+        AxisControllerBase* axis = m_axisManager ? m_axisManager->controller(axisId) : nullptr;
+        if (!axis) return;
         // The panel speaks PWM (-255..255). A stepper's jog is steps/sec, so
         // the same number would mean a crawl — scale it to a fraction of the
         // axis's own rate ceiling instead of passing it through raw.
+        // The panel speaks PWM (-255..255). A stepper's jog is steps/sec, so
+        // scale to a fraction of THAT axis's own rate ceiling.
         int cmd = speed;
-        if (axis == m_stepperController && m_projectService) {
-            const double ceiling =
-                m_projectService->project().gantryMotorSpec.stepRateCeilingHz;
+        if (qobject_cast<StepperAxisController*>(axis) && m_projectService) {
+            double ceiling = m_projectService->project().gantryMotorSpec.stepRateCeilingHz;
+            for (const AxisConfig& a : m_projectService->project().axes) {
+                if (a.id == axisId) { ceiling = a.motorSpec.stepRateCeilingHz; break; }
+            }
             cmd = qRound(speed / 255.0 * ceiling);
         }
         QMetaObject::invokeMethod(axis, [axis, cmd]() { axis->jogGantry(cmd); },
                                   Qt::QueuedConnection);
     });
-    connect(m_teachPanel, &TeachPanel::gantryJogStopRequested, this, [this]() {
-        if (!m_axisController) return;
-        AxisControllerBase* axis = m_axisController;
+    connect(m_teachPanel, &TeachPanel::axisJogStopRequested, this,
+            [this](const QString& axisId) {
+        AxisControllerBase* axis = m_axisManager ? m_axisManager->controller(axisId) : nullptr;
+        if (!axis) return;
         QMetaObject::invokeMethod(axis, [axis]() { axis->stopJog(); }, Qt::QueuedConnection);
     });
-    connect(m_teachPanel, &TeachPanel::gantryHomeRequested, this, [this]() {
-        if (!m_axisController) return;
-        AxisControllerBase* axis = m_axisController;
+    connect(m_teachPanel, &TeachPanel::axisHomeRequested, this,
+            [this](const QString& axisId) {
+        AxisControllerBase* axis = m_axisManager ? m_axisManager->controller(axisId) : nullptr;
+        if (!axis) return;
         QMetaObject::invokeMethod(axis, [axis]() { axis->homeGantry(); }, Qt::QueuedConnection);
     });
     // Both controllers report position, but only the active one runs a control
     // loop (see AxisControllerBase::setActive), so only one is ever talking.
-    connect(m_gantryController, &GantryAxisController::positionChanged,
-            m_teachPanel, &TeachPanel::updateGantryPosition);
-    connect(m_stepperController, &StepperAxisController::positionChanged,
-            m_teachPanel, &TeachPanel::updateGantryPosition);
+    // Reported WITH the axis id: several axes poll independently, and the
+    // panel shows only the selected one rather than whichever replied last.
+    if (m_axisManager) {
+        for (const QString& id : m_axisManager->axisIds()) {
+            if (auto* dc = m_axisManager->dcController(id)) {
+                connect(dc, &GantryAxisController::positionChanged, this,
+                        [this, id](double p) { m_teachPanel->updateAxisPosition(id, p); });
+            }
+            if (auto* st = m_axisManager->stepperController(id)) {
+                connect(st, &StepperAxisController::positionChanged, this,
+                        [this, id](double p) { m_teachPanel->updateAxisPosition(id, p); });
+            }
+        }
+    }
     // Seed the readout's units from the loaded project (the change signal
     // only fires on edits, and the panel didn't exist when that was wired).
     if (m_projectService && m_teachPanel) {
@@ -1139,6 +1156,12 @@ void MainWindow::refreshTrackWidgetAxes()
         rows.append(row);
     }
     m_fizTrackWidget->setAxes(rows);
+
+    if (m_teachPanel) {
+        QStringList ids, names;
+        for (const FizTrackWidget::AxisRow& r : rows) { ids << r.id; names << r.name; }
+        m_teachPanel->setAxes(ids, names);
+    }
 }
 
 void MainWindow::refreshAxisPointers()

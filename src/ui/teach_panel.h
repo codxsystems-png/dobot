@@ -20,8 +20,17 @@ public:
     void setRobotConnected(bool connected);
     void setGantryConnected(bool connected);
 
+    /// Populates the axis selector. The board (port + Connect) is shared by
+    /// all of them, which matches the hardware: one Arduino, several axes.
+    void setAxes(const QStringList& axisIds, const QStringList& displayNames);
+    /// Which axis the jog/home block is currently driving.
+    QString selectedAxisId() const;
+
 public slots:
     void updateGantryPosition(double posMm);
+    /// Position for a specific axis; ignored unless that axis is selected, so
+    /// a background axis's polling cannot overwrite the visible readout.
+    void updateAxisPosition(const QString& axisId, double pos);
 
     /// Unit label for the external axis readout ("mm" or "deg"). Pushed by
     /// MainWindow when the axis type changes — TeachPanel has no
@@ -57,6 +66,14 @@ signals:
     void gantryJogStopRequested();
     void gantryHomeRequested();
 
+    /// Axis-qualified equivalents, carrying which axis the operator selected.
+    /// The unqualified ones above still fire for the primary axis so existing
+    /// wiring keeps working.
+    void axisJogRequested(const QString& axisId, int speed);
+    void axisJogStopRequested(const QString& axisId);
+    void axisHomeRequested(const QString& axisId);
+    void axisSelectionChanged(const QString& axisId);
+
     /// "Record Path" toggled — checked=true starts a continuous capture of
     /// hand-jogged gantry motion (see PathRecorderService), false stops it
     /// and commits the simplified result as timeline keyframes.
@@ -91,6 +108,8 @@ private:
     QGroupBox*    m_gantryGroup     = nullptr;
     QPushButton*  m_gantryConnectBtn = nullptr;
     QComboBox*    m_gantryPortCombo  = nullptr;
+    QComboBox*    m_axisSelectCombo  = nullptr;
+    QStringList   m_axisIds;
     QPushButton*  m_gantryHomeBtn   = nullptr;
     QLabel*       m_gantryPosLabel  = nullptr;
     QString       m_axisUnitLabel   = "mm";
