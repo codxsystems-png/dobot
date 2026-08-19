@@ -145,6 +145,42 @@ void PlaybackEngine::emergencyStop()
         "PlaybackEngine", "EMERGENCY STOP triggered");
 }
 
+namespace {
+// Nothing here needs engine state; kept local so the resolution rule lives in
+// exactly one place.
+} // namespace
+
+timeline::DeliveryMode PlaybackEngine::deliveryModeFor(const QString& trackId) const
+{
+    if (!m_timeline) return timeline::DeliveryMode::Streamed;
+    for (const auto& track : m_timeline->allTracks()) {
+        if (track->trackId() == trackId) return track->deliveryMode();
+    }
+    return timeline::DeliveryMode::Streamed;
+}
+
+bool PlaybackEngine::isStreamedNow(const QString& trackId) const
+{
+    const auto mode = deliveryModeFor(trackId);
+    return mode == timeline::DeliveryMode::Streamed
+        || (mode == timeline::DeliveryMode::StreamedOrWaypoint && m_mode == Mode::Streamed);
+}
+
+bool PlaybackEngine::isWaypointNow(const QString& trackId) const
+{
+    const auto mode = deliveryModeFor(trackId);
+    return mode == timeline::DeliveryMode::Waypoint
+        || (mode == timeline::DeliveryMode::StreamedOrWaypoint && m_mode == Mode::FireTogether);
+}
+
+hardware::IDeviceAdapter* PlaybackEngine::gatingAdapter() const
+{
+    for (auto it = m_adapters.constBegin(); it != m_adapters.constEnd(); ++it) {
+        if (*it && (*it)->gatesPlaybackCompletion()) return *it;
+    }
+    return nullptr;
+}
+
 void PlaybackEngine::onTick()
 {
     if (m_state != State::Playing || !m_timeline) return;
@@ -152,18 +188,17 @@ void PlaybackEngine::onTick()
     double now = currentTime();
     emit playheadTimeUpdated(now);
 
-    // 1. Evaluate Streams for axes that support/need it. Gantry and FIZ are
-    //    always continuous. The robot only joins this path in Mode::Streamed
-    //    (RobotTrack::sampleAt() only produces meaningful interpolation then
-    //    — see track_impls.h); Mode::FireTogether (the default) leaves it to
-    //    step 2 below.
+    // 1. Evaluate streams for every track that delivers continuously. Which
+    //    tracks those are is now the TRACK's answer (deliveryMode()), not a
+    //    list of ids kept here — so a newly added axis streams without the
+    //    engine being edited, and a misspelled id fails loudly at wiring time
+    //    instead of being silently skipped every tick.
     QMap<QString, QVariant> frame = m_timeline->getFrame(now);
     for (auto it = frame.begin(); it != frame.end(); ++it) {
-        if (!m_adapters.contains(it.key())) continue;
-        bool isStreamedTrack = (it.key() == "gantry" || it.key() == "fiz")
-            || (it.key() == "robot" && m_mode == Mode::Streamed);
-        if (isStreamedTrack) {
-            m_adapters[it.key()]->sendStreamedSetpoint(it.value());
+        auto adapterIt = m_adapters.constFind(it.key());
+        if (adapterIt == m_adapters.constEnd()) continue;
+        if (isStreamedNow(it.key())) {
+            (*adapterIt)->sendStreamedSetpoint(it.value());
         }
     }
 
@@ -174,9 +209,10 @@ void PlaybackEngine::onTick()
     //    window doesn't advance past it, so it's retried next tick instead
     //    of firing blind (racing the robot's own queue) or being skipped.
     if (m_mode == Mode::FireTogether) {
-        auto robotIt = m_adapters.constFind("robot");
-        hardware::IDeviceAdapter* robotAdapter =
-            (robotIt != m_adapters.constEnd()) ? *robotIt : nullptr;
+        // Whichever device holds up completion is also the one a
+        // pause-after-move waypoint waits on — both questions are "is there
+        // still a discrete move in flight".
+        hardware::IDeviceAdapter* robotAdapter = gatingAdapter();
 
         // A "pause after this move" waypoint fired last tick — hold here
         // (don't fire the next keyframe) once it's confirmed complete,
@@ -200,7 +236,7 @@ void PlaybackEngine::onTick()
             QString tId = track->trackId();
             if (!m_adapters.contains(tId)) continue;
 
-            if (tId == "robot") {
+            if (isWaypointNow(tId)) {
                 hardware::IDeviceAdapter* adapter = m_adapters[tId];
                 auto kfs = track->keyframes();
                 for (const auto& kf : kfs) {
@@ -238,9 +274,13 @@ void PlaybackEngine::onTick()
     if (m_duration > 0.0 && now >= m_duration) {
         bool robotStillMoving = false;
         if (m_mode == Mode::FireTogether) {
-            auto it = m_adapters.constFind("robot");
-            if (it != m_adapters.constEnd() && (*it)->isConnected()) {
-                robotStillMoving = !(*it)->isReady();
+            // Any gating device that is CONNECTED but not ready is genuinely
+            // mid-move. Not-connected must never count, or playback on a rig
+            // without that device could never end.
+            for (auto it = m_adapters.constBegin(); it != m_adapters.constEnd(); ++it) {
+                hardware::IDeviceAdapter* a = *it;
+                if (!a || !a->gatesPlaybackCompletion()) continue;
+                if (a->isConnected() && !a->isReady()) { robotStillMoving = true; break; }
             }
         }
         if (!robotStillMoving) {

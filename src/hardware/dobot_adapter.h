@@ -55,6 +55,10 @@ public:
         }
     }
 
+    /// The robot is handed discrete moves it executes on its own firmware
+    /// profile, confirmed by ResultID — so playback must wait for it.
+    bool gatesPlaybackCompletion() const override { return true; }
+
     QString deviceName() const override { return "Dobot Nova 5"; }
 
     bool isReady() const override {

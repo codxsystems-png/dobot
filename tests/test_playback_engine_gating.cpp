@@ -10,8 +10,31 @@
 #include "timeline/playback_engine.h"
 #include "timeline/track_impls.h"
 #include "hardware/mock_dobot_adapter.h"
+#include "hardware/device_adapter.h"
 
 using namespace timeline;
+
+namespace {
+
+/// Records which delivery path the engine used, so a test can assert on
+/// "was this streamed or fired" without a real device.
+class RecordingAdapter : public hardware::IDeviceAdapter {
+public:
+    QString deviceName() const override { return "Recording"; }
+    bool isReady() const override { return ready; }
+    bool isConnected() const override { return connected; }
+    void enqueueMoveCommand(const QVariant&, double) override { waypointCount++; }
+    void sendStreamedSetpoint(const QVariant&) override { streamedCount++; }
+    void stopMotion() override {}
+    void emergencyStop() override {}
+
+    int  streamedCount = 0;
+    int  waypointCount = 0;
+    bool ready     = true;
+    bool connected = true;
+};
+
+} // namespace
 
 class TestPlaybackEngineGating : public QObject
 {
@@ -171,6 +194,75 @@ private slots:
         QVERIFY2(completedSpy.wait(3000),
                  "playbackCompleted() never fired — playback did not auto-stop "
                  "when the robot adapter was disconnected");
+        QCOMPARE(engine.currentState(), PlaybackEngine::State::Stopped);
+    }
+
+    // ─── Capability flags, not hardcoded track ids ────────────────────────
+
+    /// The engine used to decide what to stream by comparing track ids
+    /// against "gantry", "fiz" and "robot". A second external axis — the
+    /// whole point of the multi-axis work — would have been silently
+    /// skipped every tick, with no error anywhere, because its id was not
+    /// on that list. This is the test that would have caught it.
+    void testArbitrarilyNamedAxisStillStreams()
+    {
+        auto tl = std::make_shared<Timeline>();
+        auto track = std::make_shared<GantryTrack>("tilt_head_2");
+
+        TrackKeyframe a; a.id = "a"; a.time = 0.0; a.value = 0.0;
+        TrackKeyframe b; b.id = "b"; b.time = 1.0; b.value = 100.0;
+        track->addKeyframe(a);
+        track->addKeyframe(b);
+        tl->addTrack(track);
+
+        RecordingAdapter adapter;
+        PlaybackEngine engine;
+        engine.addAdapter("tilt_head_2", &adapter);
+        engine.setTimeline(tl);
+        engine.play();
+        QTest::qWait(200);
+        engine.stop();
+
+        QVERIFY2(adapter.streamedCount > 0,
+                 "an axis whose id is not one of the three legacy literals "
+                 "must still receive streamed setpoints");
+        QCOMPARE(adapter.waypointCount, 0);
+    }
+
+    /// The mirror: a device that does NOT gate must never hold playback
+    /// open, even while it reports itself not-ready. Before capability flags
+    /// the engine asked one hardcoded adapter this question; now it asks
+    /// every adapter whether it gates, and a streamed axis answers no —
+    /// because its commanded position IS the setpoint just sent, so there is
+    /// nothing in flight to wait for.
+    void testNonGatingDeviceDoesNotBlockCompletion()
+    {
+        auto tl = std::make_shared<Timeline>();
+        auto track = std::make_shared<GantryTrack>("gantry");
+
+        // Spread over a second: a 10-unit move in 0.1s is genuinely
+        // infeasible and the gantry preflight rejects it, so play() would
+        // return before the completion path was ever reached.
+        TrackKeyframe a; a.id = "a"; a.time = 0.0; a.value = 0.0;
+        TrackKeyframe b; b.id = "b"; b.time = 1.0; b.value = 10.0;
+        track->addKeyframe(a);
+        track->addKeyframe(b);
+        tl->addTrack(track);
+
+        RecordingAdapter adapter;
+        adapter.ready = false;      // permanently "not ready", but non-gating
+
+        PlaybackEngine engine;
+        engine.addAdapter("gantry", &adapter);
+        engine.setTimeline(tl);
+        engine.setDuration(0.3);
+
+        QSignalSpy completedSpy(&engine, &PlaybackEngine::playbackCompleted);
+        engine.playFromStart();
+
+        QVERIFY2(completedSpy.wait(3000),
+                 "a non-gating adapter reporting not-ready must not keep "
+                 "playback running forever");
         QCOMPARE(engine.currentState(), PlaybackEngine::State::Stopped);
     }
 };

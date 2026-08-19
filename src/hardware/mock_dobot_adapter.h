@@ -19,6 +19,11 @@ class MockDobotAdapter : public IDeviceAdapter {
 public:
     explicit MockDobotAdapter(QObject* parent = nullptr) : IDeviceAdapter(parent) {}
 
+    /// Mirrors DobotAdapter, so simulated playback ends the same way real
+    /// playback does — a mock that did not gate would make the completion
+    /// tests pass for the wrong reason.
+    bool gatesPlaybackCompletion() const override { return true; }
+
     QString deviceName() const override { return "Mock Dobot Nova 5"; }
 
     bool isReady() const override { return m_ready && !m_moving; }

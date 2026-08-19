@@ -31,6 +31,21 @@ public:
     // device simply wasn't hooked up.
     virtual bool isConnected() const = 0;
 
+    /// True when this device's in-flight motion should hold up end-of-
+    /// timeline and the pause-after-move check.
+    ///
+    /// Only devices given discrete commands that take real time to execute
+    /// gate: the engine has genuinely handed them something and cannot know
+    /// when it lands without asking. A continuously-streamed axis never
+    /// gates, because its commanded position IS the setpoint the engine just
+    /// sent — there is nothing outstanding to wait for.
+    ///
+    /// Default false, so an axis that does not opt in can never wedge
+    /// playback open. That direction of default matters: the previous
+    /// hardcoded version treated a NOT-CONNECTED robot as "still moving",
+    /// and playback on a gantry-only rig could never stop by itself.
+    virtual bool gatesPlaybackCompletion() const { return false; }
+
     // Mode 1: Fire-Together (send to target, device handles profile internally)
     virtual void enqueueMoveCommand(const QVariant& target, double expectedDurationSec) = 0;
 

@@ -42,6 +42,13 @@ protected:
 // ─── Robot Track ───────────────────────────────────────────────────────────────
 class RobotTrack : public BaseTrack {
 public:
+    /// Streamed under Mode::Streamed, waypoint under Mode::FireTogether —
+    /// the engine resolves it, since only the engine knows the mode.
+    timeline::DeliveryMode deliveryMode() const override {
+        return timeline::DeliveryMode::StreamedOrWaypoint;
+    }
+
+public:
     explicit RobotTrack(const QString& id) : BaseTrack(id) {}
 
     void setWorkspaceLimits(const WorkspaceLimits& limits) { m_workspace = limits; }

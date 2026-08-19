@@ -63,6 +63,15 @@ private slots:
     void onAdapterError(const QString& msg);
 
 private:
+    /// Capability lookups that replaced the engine's hardcoded track ids.
+    /// Resolving StreamedOrWaypoint needs m_mode, which only the engine has,
+    /// so the rule lives here rather than on the track.
+    timeline::DeliveryMode deliveryModeFor(const QString& trackId) const;
+    bool isStreamedNow(const QString& trackId) const;
+    bool isWaypointNow(const QString& trackId) const;
+    /// First adapter that holds up end-of-timeline, or nullptr.
+    hardware::IDeviceAdapter* gatingAdapter() const;
+
     std::shared_ptr<Timeline> m_timeline;
     QMap<QString, hardware::IDeviceAdapter*> m_adapters;
 
