@@ -364,7 +364,7 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
             static_cast<AxisDriveKind>(motorSpec["driveKind"].toInt(0));
         m_project.gantryMotorSpec.pulsesPerRev = motorSpec["pulsesPerRev"].toDouble(1600.0);
         m_project.gantryMotorSpec.stepRateCeilingHz =
-            motorSpec["stepRateCeilingHz"].toDouble(8000.0);
+            motorSpec["stepRateCeilingHz"].toDouble(3500.0);
     } else {
         m_project.gantryMotorSpec = GantryMotorSpec(); // old project file — behave exactly as before
     }

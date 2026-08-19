@@ -139,14 +139,21 @@ struct GantryMotorSpec {
     /// physical constant GantryTuning::countsPerUnit holds for a DC encoder.
     double pulsesPerRev      = 1600.0;
 
-    /// Stepper only: max step rate the board can actually clock out.
+    /// Stepper only: max step rate the axis can actually SUSTAIN.
     ///
     /// Lives here rather than with the tuning because it is an INPUT TO
     /// VELOCITY DERIVATION, and it usually binds before motor RPM does — at
-    /// 1600 p/r on a 4mm screw, 8kHz is 20mm/s while the motor's own rating
-    /// would suggest 200. Deriving from RPM alone advertises a speed the board
+    /// 1600 p/r on a 4mm screw, this is 8.75mm/s while the motor's own rating
+    /// would suggest 200. Deriving from RPM alone advertises a speed the axis
     /// cannot produce, and every segment time computed from it would be a lie.
-    double stepRateCeilingHz = 8000.0;
+    ///
+    /// The default is deliberately conservative. This is a MEASURED quantity —
+    /// bench-sweep the axis and watch the shaft, because the board's own step
+    /// count cannot see a lost step and will report every rate as fine. On the
+    /// first rig measured, a free shaft followed cleanly to 5000 and dropped
+    /// ~800 steps in 64000 at 8000; the checklist takes 70% of the last clean
+    /// rate. A coupled load lowers it further, so re-measure after coupling.
+    double stepRateCeilingHz = 3500.0;
 };
 
 /// Runtime closed-loop configuration for the external axis. Deliberately
