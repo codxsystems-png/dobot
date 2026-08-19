@@ -12,6 +12,9 @@
 #include <QMessageBox>
 #include <QFont>
 #include <QHBoxLayout>
+#include <QScrollArea>
+#include <QScreen>
+#include <QGuiApplication>
 
 // The control loop ticks at 50Hz; used to express the PWM ramp limit as a
 // wall-clock "time to full power", which is far more legible than PWM/tick.
@@ -23,7 +26,7 @@ GantrySetupDialog::GantrySetupDialog(ProjectService* projectService, QWidget* pa
     , m_projectService(projectService)
 {
     setWindowTitle("Gantry / External Axis Setup");
-    setMinimumWidth(500);
+    setMinimumWidth(560);
     setupUI();
     updateForDriveKind();
     updateUnitLabels();
@@ -47,7 +50,19 @@ GantryMotorSpec GantrySetupDialog::specFromWidgets() const
 
 void GantrySetupDialog::setupUI()
 {
-    QVBoxLayout* layout = new QVBoxLayout(this);
+    QVBoxLayout* outer = new QVBoxLayout(this);
+
+    // The form is taller than a laptop screen once the stepper group appears,
+    // and a dialog that grows past the screen edge puts OK out of reach. The
+    // groups scroll; the buttons stay pinned below them.
+    QScrollArea* scroll = new QScrollArea();
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    QWidget* content = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(0, 0, 0, 0);
 
     GantryMotorSpec spec;
     GantryTuning    tuning;
@@ -232,10 +247,22 @@ void GantrySetupDialog::setupUI()
     connect(m_pwmRampSpin, &QSpinBox::valueChanged,
             this, &GantrySetupDialog::updateRampReadout);
 
+    layout->addStretch();
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
+
     QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(buttons, &QDialogButtonBox::accepted, this, &GantrySetupDialog::onAccepted);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    layout->addWidget(buttons);
+    outer->addWidget(buttons);
+
+    // Open at a comfortable height, but never taller than the screen it is
+    // opening on — which is what made the buttons unreachable.
+    int wanted = 720;
+    if (QScreen* screen = QGuiApplication::primaryScreen()) {
+        wanted = qMin(wanted, static_cast<int>(screen->availableGeometry().height() * 0.85));
+    }
+    resize(600, wanted);
 }
 
 void GantrySetupDialog::updateForDriveKind()

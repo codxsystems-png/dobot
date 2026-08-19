@@ -10,6 +10,8 @@
 
 #include <QtTest/QtTest>
 #include "infrastructure/gantry/stepper_axis_controller.h"
+#include "infrastructure/gantry/gantryaxiscontroller.h"
+#include "infrastructure/gantry/axis_board_link.h"
 #include "infrastructure/gantry/fake_serial_transport.h"
 
 namespace {
@@ -515,6 +517,79 @@ private slots:
         QCOMPARE(axis.encoderCountsPerMm(), 160.0);
         QCOMPARE(axis.travelLimits().maxMm, 250.0);
         QVERIFY(fake->wasCommandSent("L 1 6000 30000"));
+    }
+
+    // ─── Sharing one board link between two axes ──────────────────────────
+
+    /// The UI opens the serial port once, on ONE controller. Every other axis
+    /// on that link must still run its control loop — otherwise it looks
+    /// connected, reports no position, and lets the board's watchdog stop it
+    /// mid-move because nothing is refreshing the setpoint.
+    ///
+    /// This was a real bug: the control timer was created inside connectPort(),
+    /// so an axis that never had connectPort() called on it never got one.
+    void testSharedLinkStartsTheLoopForEveryAxis()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        GantryAxisController  dc(&link, 0);
+        StepperAxisController stepper(&link, 1);
+
+        dc.connectPort("COM_FAKE");          // only the DC axis is connected
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+
+        fake->clearWrittenCommands();
+        QTest::qWait(250);                   // several 20ms control ticks
+
+        QVERIFY(stepper.isIdentified());
+        QVERIFY(!fake->commandsMatching("Q 1").isEmpty());
+    }
+
+    /// The mirror: only one axis drives the timeline, and the other must go
+    /// quiet — it must not spend link bandwidth or push position into a UI
+    /// that is displaying the other axis.
+    void testInactiveAxisStopsPolling()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        GantryAxisController  dc(&link, 0);
+        StepperAxisController stepper(&link, 1);
+
+        stepper.setActive(false);
+        dc.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+
+        fake->clearWrittenCommands();
+        QTest::qWait(250);
+
+        QVERIFY(fake->commandsMatching("Q 1").isEmpty());
+        QVERIFY(!fake->commandsMatching("Q 0").isEmpty());   // the DC axis still runs
+    }
+
+    /// Re-identifying means the board rebooted, and its step count lives in
+    /// RAM. Every axis on the link has to drop its origin, not just the one
+    /// the port was opened on.
+    void testIdentifyClearsOriginOnASharedLink()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        GantryAxisController  dc(&link, 0);
+        StepperAxisController stepper(&link, 1);
+
+        dc.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+
+        stepper.homeGantry();
+        QVERIFY(stepper.isHomed());
+
+        // The board reboots and re-announces itself.
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+
+        QVERIFY(!stepper.isHomed());
     }
 };
 

@@ -177,6 +177,7 @@ target_sources(test_playback_engine_gating PRIVATE
 add_cambot_test(test_stepper_axis_controller test_stepper_axis_controller.cpp)
 target_sources(test_stepper_axis_controller PRIVATE
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/stepper_axis_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
     ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp

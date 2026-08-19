@@ -43,10 +43,25 @@ void AxisControllerBase::wireLink()
     connect(m_link, &AxisBoardLink::disconnected,  this, &AxisControllerBase::disconnected);
     connect(m_link, &AxisBoardLink::errorOccurred, this, &AxisControllerBase::errorOccurred);
 
+    // The control loop is created HERE, with the link, not in connectPort().
+    //
+    // Several controllers share one link, and only one of them ever has
+    // connectPort() called on it — the UI opens the port once. Creating the
+    // timer there left every other axis on the board without one, so it never
+    // ran heartbeat(), never polled its position, and never refreshed its
+    // setpoint against the board's watchdog. The axis looked connected and
+    // did nothing.
+    m_controlTimer = new QTimer(this);
+    connect(m_controlTimer, &QTimer::timeout, this, [this]() { heartbeat(); });
+
     // The board reboots when the port opens, so the control loop waits until
     // it has actually identified itself rather than polling a bootloader.
+    // Every controller on the link sees this, which is also the right moment
+    // for each to drop state that did not survive the reboot.
     connect(m_link, &AxisBoardLink::identified, this, [this](const axisproto::VersionInfo&) {
-        if (m_controlTimer && m_active) m_controlTimer->start(20);   // 50Hz
+        m_isHomed = false;
+        resetControlState();
+        if (m_active) m_controlTimer->start(20);   // 50Hz
     });
 }
 
@@ -82,13 +97,9 @@ bool AxisControllerBase::connectPort(const QString& portName)
     m_isHomed = false;
     resetControlState();
 
-    if (!m_controlTimer) {
-        m_controlTimer = new QTimer(this);
-        connect(m_controlTimer, &QTimer::timeout, this, [this]() { heartbeat(); });
-    }
-    // Deliberately NOT started here — see wireLink(): the loop starts once the
-    // board identifies itself.
-
+    // The loop is not started here — see wireLink(): it starts once the board
+    // has identified itself, for every axis on the link rather than only this
+    // one.
     return m_link->connectPort(portName);
 }
 
