@@ -46,6 +46,7 @@ target_sources(test_byte_stream_buffer PRIVATE
 add_cambot_test(test_mock_adapters test_mock_adapters.cpp)
 target_sources(test_mock_adapters PRIVATE
     ${CMAKE_SOURCE_DIR}/src/hardware/device_adapter.cpp
+    ${CMAKE_SOURCE_DIR}/src/hardware/gantry_adapter.h
     ${CMAKE_SOURCE_DIR}/src/hardware/mock_dobot_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/hardware/mock_fiz_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/math/motion_profile.cpp
@@ -120,6 +121,7 @@ target_sources(test_timeline_compiler PRIVATE
     ${CMAKE_SOURCE_DIR}/src/math/motion_profile.cpp
     ${CMAKE_SOURCE_DIR}/src/core/motion_estimator.cpp
     ${CMAKE_SOURCE_DIR}/src/hardware/device_adapter.cpp
+    ${CMAKE_SOURCE_DIR}/src/hardware/gantry_adapter.h
     ${CMAKE_SOURCE_DIR}/src/models/points_model.cpp
     ${CMAKE_SOURCE_DIR}/src/models/segments_model.cpp
     ${CMAKE_SOURCE_DIR}/src/application/gantryservice.cpp
@@ -168,6 +170,7 @@ add_cambot_test(test_playback_engine_gating test_playback_engine_gating.cpp)
 target_sources(test_playback_engine_gating PRIVATE
     ${CMAKE_SOURCE_DIR}/src/math/motion_profile.cpp
     ${CMAKE_SOURCE_DIR}/src/hardware/device_adapter.cpp
+    ${CMAKE_SOURCE_DIR}/src/hardware/gantry_adapter.h
     ${CMAKE_SOURCE_DIR}/src/hardware/mock_dobot_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/timeline/playback_engine.cpp
     ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
@@ -186,4 +189,6 @@ target_sources(test_stepper_axis_controller PRIVATE
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/fake_serial_transport.cpp
     ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
     ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
+    ${CMAKE_SOURCE_DIR}/src/hardware/device_adapter.cpp
+    ${CMAKE_SOURCE_DIR}/src/hardware/gantry_adapter.h
 )

@@ -66,9 +66,17 @@ void PlaybackService::setAdditionalServices(GantryService* gs, FizService* fs,
         m_engine->addAdapter("fiz", m_fizAdapter);
     }
     
-    if (!m_gantryAdapter && axis) {
-        m_gantryAdapter = new hardware::GantryAdapter(axis, this);
-        m_engine->addAdapter("gantry", m_gantryAdapter);
+    if (axis) {
+        if (!m_gantryAdapter) {
+            m_gantryAdapter = new hardware::GantryAdapter(axis, this);
+            m_engine->addAdapter("gantry", m_gantryAdapter);
+        } else {
+            // Re-called whenever the drive kind changes. The adapter is
+            // created once and stays registered with the engine, so it has to
+            // be re-pointed rather than rebuilt — the lazy-init guard alone
+            // would leave it streaming to the previous axis forever.
+            m_gantryAdapter->setController(axis);
+        }
     }
 }
 

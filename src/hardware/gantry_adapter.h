@@ -18,6 +18,18 @@ public:
 
     QString deviceName() const override { return "Gantry Axis"; }
 
+    /// Re-points the adapter at a different axis controller.
+    ///
+    /// The external axis can be a DC servo or a stepper, and switching between
+    /// them swaps the controller under a LIVE adapter — the adapter itself is
+    /// created once and registered with the playback engine under "gantry".
+    /// Without this it keeps streaming setpoints to the axis we stopped
+    /// driving, which looks exactly like playback doing nothing: position
+    /// updates keep arriving from the selected axis while the moves go to the
+    /// other one.
+    void setController(AxisControllerBase* controller) { m_controller = controller; }
+    AxisControllerBase* controller() const { return m_controller; }
+
     bool isReady() const override {
         return m_controller && m_controller->isConnected() && m_controller->isHomed();
     }

@@ -13,6 +13,7 @@
 #include "infrastructure/gantry/gantryaxiscontroller.h"
 #include "infrastructure/gantry/axis_board_link.h"
 #include "infrastructure/gantry/fake_serial_transport.h"
+#include "hardware/gantry_adapter.h"
 
 namespace {
 
@@ -590,6 +591,40 @@ private slots:
         fake->emitReadyRead();
 
         QVERIFY(!stepper.isHomed());
+    }
+
+    // ─── Playback adapter ─────────────────────────────────────────────────
+
+    /// The adapter is built once and stays registered with the playback engine
+    /// under "gantry", so switching drive kind has to RE-POINT it. Miss this
+    /// and the symptom is deeply misleading: the selected axis keeps reporting
+    /// position perfectly while every move is streamed to the other one, so
+    /// playback appears to do nothing at all.
+    void testAdapterRepointsAtTheActiveAxis()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        GantryAxisController  dc(&link, 0);
+        StepperAxisController stepper(&link, 1);
+        stepper.setEncoderCountsPerMm(80.0);
+        stepper.setTravelLimits({0.0, 500.0});
+
+        dc.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+        stepper.homeGantry();
+
+        hardware::GantryAdapter adapter(&dc);
+        QCOMPARE(adapter.controller(), static_cast<AxisControllerBase*>(&dc));
+
+        adapter.setController(&stepper);
+        QCOMPARE(adapter.controller(), static_cast<AxisControllerBase*>(&stepper));
+
+        fake->clearWrittenCommands();
+        adapter.sendStreamedSetpoint(QVariant(10.0));
+        QTest::qWait(50);                     // the invoke is queued
+
+        QVERIFY(fake->wasCommandSent("T 1 800"));
     }
 };
 
