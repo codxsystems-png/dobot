@@ -12,7 +12,7 @@ class SegmentsModel;
 class PointsModel;
 class GantryService;
 class FizService;
-class GantryAxisController;
+class AxisControllerBase;
 class NucleusService;
 class ProjectService;
 
@@ -64,7 +64,7 @@ public slots:
     }
     
     void setAdditionalServices(GantryService* gs, FizService* fs,
-                               GantryAxisController* gac, NucleusService* ns);
+                               AxisControllerBase* axis, NucleusService* ns);
 
     // So compileAndLoadTimeline() can read the current gantry motor spec
     // (RPM/gear ratio/etc.) and pass it through to TimelineCompiler.

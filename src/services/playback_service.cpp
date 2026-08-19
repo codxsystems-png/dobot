@@ -50,7 +50,7 @@ PlaybackService::~PlaybackService()
 }
 
 void PlaybackService::setAdditionalServices(GantryService* gs, FizService* fs, 
-                                            GantryAxisController* gac, NucleusService* ns)
+                                            AxisControllerBase* axis, NucleusService* ns)
 {
     m_gantryService = gs;
     m_fizService = fs;
@@ -66,8 +66,8 @@ void PlaybackService::setAdditionalServices(GantryService* gs, FizService* fs,
         m_engine->addAdapter("fiz", m_fizAdapter);
     }
     
-    if (!m_gantryAdapter && gac) {
-        m_gantryAdapter = new hardware::GantryAdapter(gac, this);
+    if (!m_gantryAdapter && axis) {
+        m_gantryAdapter = new hardware::GantryAdapter(axis, this);
         m_engine->addAdapter("gantry", m_gantryAdapter);
     }
 }

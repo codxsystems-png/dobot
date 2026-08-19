@@ -2,14 +2,19 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // CamBotTimeline — Gantry Service
 // Application-layer: interpolation engine + keyframe management for the linear gantry.
-// Lives on main thread. Delegates serial I/O to GantryAxisController.
+// Lives on main thread. Delegates serial I/O to the axis controller.
+//
+// It holds AxisControllerBase, not a concrete drive kind: interpolation and
+// streaming need position, connected/homed state and tick() — all of which
+// every axis kind has. That is what lets a stepper run the timeline without
+// the playback path knowing steppers exist.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include <QObject>
 #include <QList>
 #include "core/types.h"
 
-class GantryAxisController;
+class AxisControllerBase;
 
 class GantryService : public QObject
 {
@@ -17,7 +22,7 @@ class GantryService : public QObject
 public:
     explicit GantryService(QObject* parent = nullptr);
 
-    void initialize(GantryAxisController* gantryController);
+    void initialize(AxisControllerBase* axisController);
 
     // ─── Teaching ──────────────────────────────────────────
     double currentPositionMm() const;
@@ -47,6 +52,6 @@ signals:
 private:
     void sortKeyframes();
 
-    GantryAxisController*   m_controller = nullptr;
+    AxisControllerBase*     m_controller = nullptr;
     QList<GantryKeyframe>   m_keyframes;
 };

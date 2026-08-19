@@ -46,7 +46,7 @@ void AxisControllerBase::wireLink()
     // The board reboots when the port opens, so the control loop waits until
     // it has actually identified itself rather than polling a bootloader.
     connect(m_link, &AxisBoardLink::identified, this, [this](const axisproto::VersionInfo&) {
-        if (m_controlTimer) m_controlTimer->start(20);   // 50Hz
+        if (m_controlTimer && m_active) m_controlTimer->start(20);   // 50Hz
     });
 }
 
@@ -105,6 +105,19 @@ void AxisControllerBase::onLinkLost()
 
     // The position is no longer trustworthy and the origin went with it.
     m_isHomed = false;
+}
+
+void AxisControllerBase::setActive(bool active)
+{
+    if (m_active == active) return;
+    m_active = active;
+
+    if (!m_controlTimer) return;
+    if (active) {
+        if (isIdentified()) m_controlTimer->start(20);
+    } else {
+        m_controlTimer->stop();
+    }
 }
 
 void AxisControllerBase::applyTuning(const GantryTuning& tuning)

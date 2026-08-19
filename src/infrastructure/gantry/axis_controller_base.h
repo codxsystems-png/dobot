@@ -69,6 +69,14 @@ public:
 
     ConnectionStateMachine::State connectionState() const;
 
+    /// Both axis kinds can exist on one board at once, but only one drives the
+    /// timeline. An inactive controller stops its control loop entirely: it
+    /// issues no position polls, so it neither wastes link bandwidth nor emits
+    /// positionChanged into a UI that is showing the other axis. It still
+    /// receives unsolicited faults for its own axis, which is the point.
+    void setActive(bool active);
+    bool isActive() const { return m_active; }
+
 public slots:
     bool connectPort(const QString& portName);
     void disconnectPort();
@@ -117,6 +125,7 @@ protected:
 
     QTimer* m_controlTimer = nullptr;
 
+    bool   m_active  = true;
     bool   m_isHomed = false;
     double m_countsPerMm = 100.0;
     double m_currentPositionMm = 0.0;

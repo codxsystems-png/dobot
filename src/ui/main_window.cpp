@@ -23,6 +23,9 @@
 #include "presentation/dialogs/fizsetupwizard.h"
 #include "presentation/dialogs/lensmappingdialog.h"
 #include "infrastructure/gantry/gantryaxiscontroller.h"
+#include "infrastructure/gantry/stepper_axis_controller.h"
+#include "infrastructure/gantry/axis_board_link.h"
+#include "core/structured_logger.h"
 #include "application/gantryservice.h"
 #include "services/path_recorder_service.h"
 #include "core/command_builder.h"
@@ -124,12 +127,33 @@ void MainWindow::initServices()
     m_projectService = new ProjectService(nullptr, this);   // no PointsModel yet (loaded on open)
     
     // Gantry Service (Phase 8)
-    m_gantryController = new GantryAxisController();
+    //
+    // One board, one serial link, two axes — the same shape the firmware has.
+    // Both controllers are built up front and share the link; the project's
+    // drive kind decides which one the timeline actually drives. Building only
+    // the selected one would mean tearing down and rebuilding the serial
+    // connection every time that setting changed.
+    m_axisLink = new AxisBoardLink();
+    m_axisLink->moveToThread(m_gantryThread);
+    connect(m_gantryThread, &QThread::finished, m_axisLink, &QObject::deleteLater);
+
+    m_gantryController  = new GantryAxisController(m_axisLink, 0);
+    m_stepperController = new StepperAxisController(m_axisLink, 1);
     m_gantryController->moveToThread(m_gantryThread);
+    m_stepperController->moveToThread(m_gantryThread);
     connect(m_gantryThread, &QThread::finished, m_gantryController, &QObject::deleteLater);
+    connect(m_gantryThread, &QThread::finished, m_stepperController, &QObject::deleteLater);
+
+    // m_axisController starts on the DC axis, so the stepper starts silenced.
+    // Without this the selector's "nothing changed" path would leave a
+    // freshly-built stepper polling axis 1 forever on every DC project — the
+    // one case that never goes through a switch. Safe as a direct call: the
+    // axis thread has not been started yet.
+    m_stepperController->setActive(false);
+    m_axisController = m_gantryController;   // re-pointed once a project loads
 
     m_gantryService = new GantryService(this);
-    m_gantryService->initialize(m_gantryController);
+    m_gantryService->initialize(m_axisController);
 
     m_pathRecorder = new PathRecorderService(this);
 
@@ -150,7 +174,7 @@ void MainWindow::initServices()
     m_fizService->initialize(m_nucleusService);
 
     // Wire extra services into playback
-    m_playbackService->setAdditionalServices(m_gantryService, m_fizService, m_gantryController, m_nucleusService);
+    m_playbackService->setAdditionalServices(m_gantryService, m_fizService, m_axisController, m_nucleusService);
     m_playbackService->setProjectService(m_projectService);
 }
 
@@ -328,6 +352,10 @@ void MainWindow::createCentralLayout()
         });
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 m_segmentsModel, &SegmentsModel::setGantryMotorSpec);
+        // driveKind lives in the motor spec, so this is the signal that
+        // actually carries a change of it.
+        connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
+                this, [this](const GantryMotorSpec&) { selectAxisControllerForDriveKind(); });
         // Axis type drives the units shown on the jog readout (mm vs degrees).
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 this, [this](const GantryMotorSpec& spec) {
@@ -672,13 +700,40 @@ void MainWindow::createConnections()
     }
 
     // ── Gantry Panel ────────────────────────────────────────────────────────
-    connect(m_teachPanel, &TeachPanel::gantryJogRequested,
-            m_gantryController, &GantryAxisController::jogGantry);
-    connect(m_teachPanel, &TeachPanel::gantryJogStopRequested,
-            m_gantryController, &GantryAxisController::stopJog);
-    connect(m_teachPanel, &TeachPanel::gantryHomeRequested,
-            m_gantryController, &GantryAxisController::homeGantry);
+    //
+    // Routed through m_axisController rather than bound to one controller by
+    // name: with a stepper selected, a jog wired straight to the DC controller
+    // would drive the WRONG MOTOR while the readout showed the wrong axis.
+    connect(m_teachPanel, &TeachPanel::gantryJogRequested, this, [this](int speed) {
+        if (!m_axisController) return;
+        AxisControllerBase* axis = m_axisController;
+        // The panel speaks PWM (-255..255). A stepper's jog is steps/sec, so
+        // the same number would mean a crawl — scale it to a fraction of the
+        // axis's own rate ceiling instead of passing it through raw.
+        int cmd = speed;
+        if (axis == m_stepperController && m_projectService) {
+            const double ceiling =
+                m_projectService->project().gantryMotorSpec.stepRateCeilingHz;
+            cmd = qRound(speed / 255.0 * ceiling);
+        }
+        QMetaObject::invokeMethod(axis, [axis, cmd]() { axis->jogGantry(cmd); },
+                                  Qt::QueuedConnection);
+    });
+    connect(m_teachPanel, &TeachPanel::gantryJogStopRequested, this, [this]() {
+        if (!m_axisController) return;
+        AxisControllerBase* axis = m_axisController;
+        QMetaObject::invokeMethod(axis, [axis]() { axis->stopJog(); }, Qt::QueuedConnection);
+    });
+    connect(m_teachPanel, &TeachPanel::gantryHomeRequested, this, [this]() {
+        if (!m_axisController) return;
+        AxisControllerBase* axis = m_axisController;
+        QMetaObject::invokeMethod(axis, [axis]() { axis->homeGantry(); }, Qt::QueuedConnection);
+    });
+    // Both controllers report position, but only the active one runs a control
+    // loop (see AxisControllerBase::setActive), so only one is ever talking.
     connect(m_gantryController, &GantryAxisController::positionChanged,
+            m_teachPanel, &TeachPanel::updateGantryPosition);
+    connect(m_stepperController, &StepperAxisController::positionChanged,
             m_teachPanel, &TeachPanel::updateGantryPosition);
     // Seed the readout's units from the loaded project (the change signal
     // only fires on edits, and the panel didn't exist when that was wired).
@@ -695,12 +750,24 @@ void MainWindow::createConnections()
     // the point of emission; this makes them visible to the operator too.
     connect(m_gantryController, &GantryAxisController::errorOccurred,
             this, [this](const QString& err) { m_diagnosticsPanel->appendLog(err, "ERROR"); });
+    connect(m_stepperController, &StepperAxisController::errorOccurred,
+            this, [this](const QString& err) { m_diagnosticsPanel->appendLog(err, "ERROR"); });
+    // A drive alarm is the stepper's only integrity signal, so it gets said
+    // out loud rather than only appearing in the log.
+    connect(m_stepperController, &StepperAxisController::alarmRaised,
+            this, [this](const QString& text) {
+                m_diagnosticsPanel->appendLog(
+                    QString("STEPPER DRIVE ALARM: %1 - position reference lost, "
+                            "re-zero the axis before shooting.").arg(text), "ERROR");
+            });
 
     // Record Path (Phase 9): captures continuous hand-jogged gantry motion
     // as an alternative to teaching only discrete fixed points. The sample
     // feed stays connected unconditionally — PathRecorderService::addSample
     // no-ops whenever a recording isn't active.
     connect(m_gantryController, &GantryAxisController::positionChanged,
+            m_pathRecorder, &PathRecorderService::addSample);
+    connect(m_stepperController, &StepperAxisController::positionChanged,
             m_pathRecorder, &PathRecorderService::addSample);
     connect(m_teachPanel, &TeachPanel::gantryRecordToggled, this, [this](bool recording) {
         if (recording) {
@@ -1027,8 +1094,62 @@ void MainWindow::onGantryMotorSetup()
     dlg.exec();
 }
 
+bool MainWindow::activeAxisIsStepper() const
+{
+    if (!m_projectService) return false;
+    return m_projectService->project().gantryMotorSpec.driveKind
+           == AxisDriveKind::StepDirClosedLoop;
+}
+
+void MainWindow::selectAxisControllerForDriveKind()
+{
+    AxisControllerBase* wanted = activeAxisIsStepper()
+        ? static_cast<AxisControllerBase*>(m_stepperController)
+        : static_cast<AxisControllerBase*>(m_gantryController);
+    if (!wanted || wanted == m_axisController) return;
+
+    AxisControllerBase* previous = m_axisController;
+    m_axisController = wanted;
+
+    // Silence the axis we are no longer driving, and wake the one we are.
+    // Queued, because both live on the axis thread.
+    if (previous && previous != wanted) {
+        QMetaObject::invokeMethod(previous, [previous]() {
+            previous->stopJog();
+            previous->setActive(false);
+        }, Qt::QueuedConnection);
+    }
+    QMetaObject::invokeMethod(wanted, [wanted]() { wanted->setActive(true); },
+                              Qt::QueuedConnection);
+
+    if (m_gantryService)   m_gantryService->initialize(m_axisController);
+    if (m_playbackService) {
+        m_playbackService->setAdditionalServices(m_gantryService, m_fizService,
+                                                 m_axisController, m_nucleusService);
+    }
+
+    StructuredLogger::instance().log(StructuredLogger::Category::Motion, "MainWindow",
+        QString("External axis is now driven as %1.")
+            .arg(activeAxisIsStepper() ? "a step/dir stepper (axis 1)"
+                                       : "a DC servo (axis 0)"));
+}
+
 void MainWindow::onGantryTuning()
 {
+    // A stepper closes its own loop — there are no gains to set. The step test
+    // and relay auto-tune are worse than useless here: both command raw PWM,
+    // which on this board goes to the DC axis's H-bridge, so running them
+    // against a stepper would drive the WRONG MOTOR. Refuse outright rather
+    // than opening a dialog full of dead controls.
+    if (activeAxisIsStepper()) {
+        QMessageBox::information(this, tr("PID Tuning"),
+            tr("This axis is a closed-loop stepper, so there is no PID to tune. "
+               "The drive closes its own loop internally. Its settings live in "
+               "Gantry / External Axis Setup: steps per unit, max step rate, "
+               "and step acceleration."));
+        return;
+    }
+
     GantryTuningDialog dlg(m_projectService, m_gantryController, m_playbackService, this);
     dlg.exec();
 }
@@ -1061,12 +1182,28 @@ double MainWindow::flooredGantryKeyframeTime(const QString& excludeId,
 
 void MainWindow::pushGantryTuning()
 {
-    if (!m_projectService || !m_gantryController) return;
+    if (!m_projectService) return;
+
+    // The drive kind may have just changed in the setup dialog, so re-select
+    // before pushing — otherwise the settings land on the axis we are no
+    // longer driving.
+    selectAxisControllerForDriveKind();
+    if (!m_axisController) return;
 
     // Copy by value — the lambda runs later, on the controller's own thread.
     const GantryTuning tuning = m_projectService->project().gantryTuning;
-    QMetaObject::invokeMethod(m_gantryController, [this, tuning]() {
-        m_gantryController->applyTuning(tuning);
+    const GantryMotorSpec spec = m_projectService->project().gantryMotorSpec;
+    AxisControllerBase* axis = m_axisController;
+    auto* stepper = (axis == m_stepperController) ? m_stepperController : nullptr;
+
+    QMetaObject::invokeMethod(axis, [axis, stepper, tuning, spec]() {
+        if (stepper) {
+            stepper->setStepRateLimits(
+                static_cast<long>(spec.stepRateCeilingHz),
+                static_cast<long>(tuning.stepAccelStepsPerSec2));
+            stepper->setIdleDisable(tuning.idleDisable);
+        }
+        axis->applyTuning(tuning);
     }, Qt::QueuedConnection);
 }
 

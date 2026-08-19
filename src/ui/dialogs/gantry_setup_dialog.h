@@ -7,8 +7,11 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include <QDialog>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QGroupBox>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -26,6 +29,11 @@ private slots:
     void updateDerivedVelocity();
     void updateUnitLabels();
     void updateRampReadout();
+    /// Shows/hides whole groups so the dialog only ever offers controls that
+    /// mean something for the selected drive kind.
+    void updateForDriveKind();
+    /// Fills the calibration field from pulses/rev, gear ratio and pitch.
+    void computeStepsPerUnit();
     void onAccepted();
 
 private:
@@ -35,8 +43,9 @@ private:
 
     ProjectService* m_projectService = nullptr;
 
-    // Axis type
-    QComboBox*      m_axisTypeCombo = nullptr;
+    // Axis type and drive kind
+    QComboBox*      m_axisTypeCombo  = nullptr;
+    QComboBox*      m_driveKindCombo = nullptr;
 
     // Motor spec
     QDoubleSpinBox* m_motorRpmSpin  = nullptr;
@@ -46,15 +55,26 @@ private:
     QLabel*         m_derivedVelocityLabel = nullptr;
     QFormLayout*    m_motorForm     = nullptr;   // for hiding the per-rev row in Rotary
 
+    // Stepper-only spec
+    QGroupBox*      m_stepGroup      = nullptr;
+    QDoubleSpinBox* m_pulsesPerRevSpin = nullptr;
+    QDoubleSpinBox* m_stepCeilingSpin  = nullptr;
+    QDoubleSpinBox* m_stepAccelSpin    = nullptr;
+    QCheckBox*      m_idleDisableCheck = nullptr;
+    QLabel*         m_stepHint         = nullptr;
+
     // Calibration
+    QGroupBox*      m_calGroup          = nullptr;
     QDoubleSpinBox* m_countsPerUnitSpin = nullptr;
     QLabel*         m_calibrationHint   = nullptr;
+    QPushButton*    m_computeStepsButton = nullptr;
 
     // Travel limits
     QDoubleSpinBox* m_travelMinSpin = nullptr;
     QDoubleSpinBox* m_travelMaxSpin = nullptr;
 
-    // Motion tuning
+    // Motion tuning (DC only — a stepper has no PWM to ramp)
+    QGroupBox*      m_tuneGroup     = nullptr;
     QSpinBox*       m_pwmRampSpin   = nullptr;
     QLabel*         m_rampReadout   = nullptr;
 

@@ -11,6 +11,7 @@
 #include <QDialogButtonBox>
 #include <QMessageBox>
 #include <QFont>
+#include <QHBoxLayout>
 
 // The control loop ticks at 50Hz; used to express the PWM ramp limit as a
 // wall-clock "time to full power", which is far more legible than PWM/tick.
@@ -24,6 +25,7 @@ GantrySetupDialog::GantrySetupDialog(ProjectService* projectService, QWidget* pa
     setWindowTitle("Gantry / External Axis Setup");
     setMinimumWidth(500);
     setupUI();
+    updateForDriveKind();
     updateUnitLabels();
     updateDerivedVelocity();
     updateRampReadout();
@@ -37,6 +39,9 @@ GantryMotorSpec GantrySetupDialog::specFromWidgets() const
     spec.mmPerRev          = m_mmPerRevSpin->value();
     spec.maxAccelMmPerSec2 = m_maxAccelSpin->value();
     spec.axisType          = static_cast<GantryAxisType>(m_axisTypeCombo->currentData().toInt());
+    spec.driveKind         = static_cast<AxisDriveKind>(m_driveKindCombo->currentData().toInt());
+    spec.pulsesPerRev      = m_pulsesPerRevSpin->value();
+    spec.stepRateCeilingHz = m_stepCeilingSpin->value();
     return spec;
 }
 
@@ -64,6 +69,16 @@ void GantrySetupDialog::setupUI()
                              static_cast<int>(GantryAxisType::Rotary));
     m_axisTypeCombo->setCurrentIndex(spec.axisType == GantryAxisType::Rotary ? 1 : 0);
     axisForm->addRow("Axis:", m_axisTypeCombo);
+
+    // Orthogonal to axis type: either drive kind can be linear or rotary.
+    m_driveKindCombo = new QComboBox();
+    m_driveKindCombo->addItem("DC servo — PWM + encoder, tuned PID",
+                              static_cast<int>(AxisDriveKind::DcServoPwm));
+    m_driveKindCombo->addItem("Stepper — STEP/DIR into a closed-loop driver",
+                              static_cast<int>(AxisDriveKind::StepDirClosedLoop));
+    m_driveKindCombo->setCurrentIndex(
+        spec.driveKind == AxisDriveKind::StepDirClosedLoop ? 1 : 0);
+    axisForm->addRow("Drive:", m_driveKindCombo);
     layout->addWidget(axisGroup);
 
     // ─── Motor Spec ───────────────────────────────────────────────────────
@@ -104,15 +119,61 @@ void GantrySetupDialog::setupUI()
     m_motorForm->addRow("", m_derivedVelocityLabel);
     layout->addWidget(group);
 
+    // ─── Stepper Driver (hidden for a DC axis) ────────────────────────────
+    m_stepGroup = new QGroupBox("Stepper Driver");
+    QFormLayout* stepForm = new QFormLayout(m_stepGroup);
+
+    m_pulsesPerRevSpin = new QDoubleSpinBox();
+    m_pulsesPerRevSpin->setRange(1.0, 100000.0);
+    m_pulsesPerRevSpin->setDecimals(0);
+    m_pulsesPerRevSpin->setSuffix(" pulses/rev");
+    m_pulsesPerRevSpin->setValue(spec.pulsesPerRev);
+    stepForm->addRow("Driver Microstep Setting:", m_pulsesPerRevSpin);
+
+    m_stepCeilingSpin = new QDoubleSpinBox();
+    m_stepCeilingSpin->setRange(100.0, 100000.0);
+    m_stepCeilingSpin->setDecimals(0);
+    m_stepCeilingSpin->setSuffix(" Hz");
+    m_stepCeilingSpin->setValue(spec.stepRateCeilingHz);
+    stepForm->addRow("Max Step Rate:", m_stepCeilingSpin);
+
+    m_stepAccelSpin = new QDoubleSpinBox();
+    m_stepAccelSpin->setRange(100.0, 1000000.0);
+    m_stepAccelSpin->setDecimals(0);
+    m_stepAccelSpin->setSuffix(" steps/s2");
+    m_stepAccelSpin->setValue(tuning.stepAccelStepsPerSec2);
+    stepForm->addRow("Step Acceleration:", m_stepAccelSpin);
+
+    m_idleDisableCheck = new QCheckBox("Release motor torque when idle");
+    m_idleDisableCheck->setChecked(tuning.idleDisable);
+    stepForm->addRow("", m_idleDisableCheck);
+
+    m_stepHint = new QLabel(
+        "Set the max step rate from the bench sweep, not from the motor rating - "
+        "it is usually what limits the axis. Leave torque release OFF on anything "
+        "gravity-loaded: releasing it lets the axis fall.");
+    m_stepHint->setStyleSheet("color: #999; font-size: 10px;");
+    m_stepHint->setWordWrap(true);
+    stepForm->addRow("", m_stepHint);
+    layout->addWidget(m_stepGroup);
+
     // ─── Calibration ──────────────────────────────────────────────────────
-    QGroupBox* calGroup = new QGroupBox("Encoder Calibration");
+    m_calGroup = new QGroupBox("Encoder Calibration");
+    QGroupBox* calGroup = m_calGroup;
     QFormLayout* calForm = new QFormLayout(calGroup);
 
     m_countsPerUnitSpin = new QDoubleSpinBox();
     m_countsPerUnitSpin->setRange(0.1, 1000000.0);
     m_countsPerUnitSpin->setDecimals(3);
     m_countsPerUnitSpin->setValue(tuning.countsPerUnit);
-    calForm->addRow("Encoder Counts per Unit:", m_countsPerUnitSpin);
+
+    // A stepper's scale factor is derivable from the driver settings, unlike
+    // an encoder's, which has to be measured.
+    m_computeStepsButton = new QPushButton("Compute from driver settings");
+    QHBoxLayout* calRow = new QHBoxLayout();
+    calRow->addWidget(m_countsPerUnitSpin);
+    calRow->addWidget(m_computeStepsButton);
+    calForm->addRow("Encoder Counts per Unit:", calRow);
 
     m_calibrationHint = new QLabel(
         "Encoder counts per unit of axis travel. If this is wrong, playback\n"
@@ -140,8 +201,9 @@ void GantrySetupDialog::setupUI()
     limitsForm->addRow("Maximum:", m_travelMaxSpin);
     layout->addWidget(limitsGroup);
 
-    // ─── Motion Tuning ────────────────────────────────────────────────────
-    QGroupBox* tuneGroup = new QGroupBox("Motion Tuning");
+    // ─── Motion Tuning (DC only) ──────────────────────────────────────────
+    m_tuneGroup = new QGroupBox("Motion Tuning");
+    QGroupBox* tuneGroup = m_tuneGroup;
     QFormLayout* tuneForm = new QFormLayout(tuneGroup);
 
     m_pwmRampSpin = new QSpinBox();
@@ -158,7 +220,12 @@ void GantrySetupDialog::setupUI()
     // ─── Live updates ─────────────────────────────────────────────────────
     connect(m_axisTypeCombo, &QComboBox::currentIndexChanged,
             this, &GantrySetupDialog::updateUnitLabels);
-    for (auto* s : { m_motorRpmSpin, m_gearRatioSpin, m_mmPerRevSpin }) {
+    connect(m_driveKindCombo, &QComboBox::currentIndexChanged,
+            this, &GantrySetupDialog::updateForDriveKind);
+    connect(m_computeStepsButton, &QPushButton::clicked,
+            this, &GantrySetupDialog::computeStepsPerUnit);
+    for (auto* s : { m_motorRpmSpin, m_gearRatioSpin, m_mmPerRevSpin,
+                     m_pulsesPerRevSpin, m_stepCeilingSpin }) {
         connect(s, &QDoubleSpinBox::valueChanged,
                 this, &GantrySetupDialog::updateDerivedVelocity);
     }
@@ -171,10 +238,49 @@ void GantrySetupDialog::setupUI()
     layout->addWidget(buttons);
 }
 
+void GantrySetupDialog::updateForDriveKind()
+{
+    const GantryMotorSpec spec = specFromWidgets();
+    const bool stepper = spec.driveKind == AxisDriveKind::StepDirClosedLoop;
+
+    // Whole groups appear and disappear rather than being greyed out. A
+    // stepper has no PWM to ramp and no PID to tune, so offering the controls
+    // at all — even disabled — implies they mean something here.
+    m_stepGroup->setVisible(stepper);
+    m_tuneGroup->setVisible(!stepper);
+    m_computeStepsButton->setVisible(stepper);
+
+    m_calGroup->setTitle(stepper ? "Step Calibration" : "Encoder Calibration");
+    m_calibrationHint->setText(stepper
+        ? "Steps per unit of axis travel. Derivable from the driver settings, "
+        "but verify it against a measured move: a mismatch of more than 2% "
+        "means a wrong microstep DIP or a slipping belt, not a number to "
+        "calibrate around."
+        : "Encoder counts per unit of axis travel. If this is wrong, playback "
+        "overshoots and the motor stalls at full power even though manual "
+        "jogging still looks accurate — jogging is open-loop and never uses it.");
+
+    updateUnitLabels();
+}
+
+void GantrySetupDialog::computeStepsPerUnit()
+{
+    const GantryMotorSpec spec = specFromWidgets();
+    const double stepsPerUnit = motion::deriveStepsPerUnit(spec);
+    if (stepsPerUnit <= 0.0) {
+        QMessageBox::warning(this, "Step Calibration",
+            "Cannot derive steps per unit from the current spec — check the gear "
+        "ratio and travel per output rev are both above zero.");
+        return;
+    }
+    m_countsPerUnitSpin->setValue(stepsPerUnit);
+}
+
 void GantrySetupDialog::updateUnitLabels()
 {
     GantryMotorSpec spec = specFromWidgets();
-    bool rotary = spec.axisType == GantryAxisType::Rotary;
+    bool rotary  = spec.axisType == GantryAxisType::Rotary;
+    bool stepper = spec.driveKind == AxisDriveKind::StepDirClosedLoop;
 
     // A rotary axis has no leadscrew or pulley — one output revolution is
     // 360 degrees by definition, so the field is meaningless there. Hidden
@@ -182,7 +288,8 @@ void GantrySetupDialog::updateUnitLabels()
     m_motorForm->setRowVisible(m_mmPerRevSpin, !rotary);
 
     m_maxAccelSpin->setSuffix(" " + motion::accelLabel(spec));
-    m_countsPerUnitSpin->setSuffix(rotary ? " counts/°" : " counts/mm");
+    if (stepper) m_countsPerUnitSpin->setSuffix(rotary ? " steps/°" : " steps/mm");
+    else         m_countsPerUnitSpin->setSuffix(rotary ? " counts/°" : " counts/mm");
     m_travelMinSpin->setSuffix(motion::unitSuffix(spec));
     m_travelMaxSpin->setSuffix(motion::unitSuffix(spec));
 
@@ -193,8 +300,18 @@ void GantrySetupDialog::updateDerivedVelocity()
 {
     GantryMotorSpec spec = specFromWidgets();
     double vMax = motion::deriveMaxGantryVelocityUnitsPerSec(spec);
-    m_derivedVelocityLabel->setText(
-        QString("→ Max speed: %1 %2").arg(vMax, 0, 'f', 1).arg(motion::velocityLabel(spec)));
+
+    QString text = QString("→ Max speed: %1 %2")
+                       .arg(vMax, 0, 'f', 1).arg(motion::velocityLabel(spec));
+
+    // Say WHICH limit binds. "Why is my axis slow" has two entirely different
+    // answers — a smaller motor or a faster board — and the fix differs.
+    if (spec.driveKind == AxisDriveKind::StepDirClosedLoop) {
+        text += motion::stepCeilingIsBinding(spec)
+                    ? "  (limited by step rate, not motor RPM)"
+                    : "  (limited by motor RPM)";
+    }
+    m_derivedVelocityLabel->setText(text);
 }
 
 void GantrySetupDialog::updateRampReadout()
@@ -202,7 +319,7 @@ void GantrySetupDialog::updateRampReadout()
     double msToFull = static_cast<double>(MAX_PWM) / m_pwmRampSpin->value() * CONTROL_TICK_MS;
     m_rampReadout->setText(
         QString("→ 0 to full power in %1 ms. Too low and the loop can't keep up "
-                "with a fast move; too high and the axis jerks.")
+        "with a fast move; too high and the axis jerks.")
             .arg(msToFull, 0, 'f', 0));
 }
 
@@ -224,6 +341,8 @@ void GantrySetupDialog::onAccepted()
         tuning.travelLimits.minMm = m_travelMinSpin->value();
         tuning.travelLimits.maxMm = m_travelMaxSpin->value();
         tuning.pwmRampPerTick     = m_pwmRampSpin->value();
+        tuning.stepAccelStepsPerSec2 = m_stepAccelSpin->value();
+        tuning.idleDisable           = m_idleDisableCheck->isChecked();
         // Carried through from load — PID gains belong to the tuning dialog.
         tuning.pidKp = m_pidKp;
         tuning.pidKi = m_pidKi;

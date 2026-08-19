@@ -110,6 +110,81 @@ private slots:
 
         QCOMPARE(motion::minGantryDurationSec(from, to, spec, 3.0), 3.0);
     }
+
+    // ─── Stepper: the pulse ceiling usually binds before motor RPM ────────
+
+    void testStepsPerUnitFromPulsesGearAndPitch()
+    {
+        GantryMotorSpec spec;
+        spec.driveKind    = AxisDriveKind::StepDirClosedLoop;
+        spec.pulsesPerRev = 1600.0;
+        spec.gearRatio    = 1.0;
+        spec.mmPerRev     = 4.0;          // 4mm leadscrew
+
+        QCOMPARE(motion::deriveStepsPerUnit(spec), 400.0);
+    }
+
+    void testStepsPerUnitRotaryUses360()
+    {
+        GantryMotorSpec spec;
+        spec.driveKind    = AxisDriveKind::StepDirClosedLoop;
+        spec.axisType     = GantryAxisType::Rotary;
+        spec.pulsesPerRev = 1800.0;
+        spec.gearRatio    = 2.0;          // 2:1 reducer
+
+        // 1800 pulses per motor rev x 2 motor revs per output rev / 360 deg
+        QCOMPARE(motion::deriveStepsPerUnit(spec), 10.0);
+    }
+
+    /// The case that matters: a motor rated for 200mm/s on a board that can
+    /// only clock 20mm/s worth of pulses. Deriving from RPM alone would put
+    /// segment times on the timeline that the axis silently cannot meet.
+    void testStepCeilingCapsVelocityBelowRpm()
+    {
+        GantryMotorSpec spec;
+        spec.driveKind         = AxisDriveKind::StepDirClosedLoop;
+        spec.motorRpm          = 3000.0;
+        spec.gearRatio         = 1.0;
+        spec.mmPerRev          = 4.0;
+        spec.pulsesPerRev      = 1600.0;
+        spec.stepRateCeilingHz = 8000.0;
+
+        // RPM path would give 3000/60 * 4 = 200 mm/s.
+        // Step path gives 8000 / 400 = 20 mm/s, and that is what binds.
+        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 20.0);
+        QVERIFY(motion::stepCeilingIsBinding(spec));
+    }
+
+    void testRpmStillBindsWhenCeilingIsGenerous()
+    {
+        GantryMotorSpec spec;
+        spec.driveKind         = AxisDriveKind::StepDirClosedLoop;
+        spec.motorRpm          = 300.0;
+        spec.gearRatio         = 1.0;
+        spec.mmPerRev          = 4.0;
+        spec.pulsesPerRev      = 1600.0;
+        spec.stepRateCeilingHz = 100000.0;   // far more than the motor can use
+
+        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 20.0); // 300/60*4
+        QVERIFY(!motion::stepCeilingIsBinding(spec));
+    }
+
+    /// A DC axis has no step rate, so the ceiling must never touch it — this
+    /// is what keeps every existing project's derived times identical.
+    void testDcAxisIsUnaffectedByStepFields()
+    {
+        GantryMotorSpec spec;
+        spec.driveKind         = AxisDriveKind::DcServoPwm;
+        spec.motorRpm          = 3000.0;
+        spec.gearRatio         = 1.0;
+        spec.mmPerRev          = 4.0;
+        spec.pulsesPerRev      = 1600.0;
+        spec.stepRateCeilingHz = 1.0;        // absurd, and must be ignored
+
+        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 200.0);
+        QVERIFY(!motion::stepCeilingIsBinding(spec));
+        QCOMPARE(motion::deriveStepCeilingVelocityUnitsPerSec(spec), 0.0);
+    }
 };
 
 QTEST_MAIN(TestMotionEstimator)

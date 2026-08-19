@@ -103,6 +103,19 @@ enum class GantryAxisType : int {
     Rotary = 1    // bare motor — units are degrees
 };
 
+/// How the axis is driven. Orthogonal to GantryAxisType, which is about units:
+/// either drive kind can be linear or rotary.
+///
+/// This is the discriminator that decides which controller class runs the axis,
+/// and it is deliberately not "just a flag": a DC servo is closed by a host-side
+/// PID over PWM, while a CL57C stepper is handed step targets and closes its own
+/// loop. PID gains, the PWM ramp and the tuning workflows exist only for the
+/// former.
+enum class AxisDriveKind : int {
+    DcServoPwm        = 0,   // H-bridge + quadrature encoder, host-side PID
+    StepDirClosedLoop = 1    // STEP/DIR into a closed-loop driver (CL57C)
+};
+
 /// Real motor-spec parameters for the external axis, used to DERIVE its
 /// max velocity (see motion::deriveMaxGantryVelocityUnitsPerSec). Max
 /// acceleration can't be derived from RPM/gear ratio alone (needs torque/
@@ -118,6 +131,22 @@ struct GantryMotorSpec {
     double maxAccelMmPerSec2 = 400.0; // not derivable from RPM/gear ratio — direct entry
     bool   configured        = false;
     GantryAxisType axisType  = GantryAxisType::Linear;
+
+    AxisDriveKind driveKind  = AxisDriveKind::DcServoPwm;
+
+    /// Stepper only: the driver's pulses/rev DIP setting. Combined with
+    /// gearRatio and mmPerRev this gives steps per unit, which is the same
+    /// physical constant GantryTuning::countsPerUnit holds for a DC encoder.
+    double pulsesPerRev      = 1600.0;
+
+    /// Stepper only: max step rate the board can actually clock out.
+    ///
+    /// Lives here rather than with the tuning because it is an INPUT TO
+    /// VELOCITY DERIVATION, and it usually binds before motor RPM does — at
+    /// 1600 p/r on a 4mm screw, 8kHz is 20mm/s while the motor's own rating
+    /// would suggest 200. Deriving from RPM alone advertises a speed the board
+    /// cannot produce, and every segment time computed from it would be a lie.
+    double stepRateCeilingHz = 8000.0;
 };
 
 /// Runtime closed-loop configuration for the external axis. Deliberately
@@ -137,6 +166,15 @@ struct GantryTuning {
     double       pidKi = 0.1;
     double       pidKd = 0.05;
     bool         configured = false;
+
+    // ─── Stepper-only ────────────────────────────────────────────────────
+    // The step-rate ceiling lives in GantryMotorSpec, not here — see the note
+    // there. These two are board-side clamps and policy, not motion inputs.
+    /// Step acceleration clamp, applied on the board.
+    double stepAccelStepsPerSec2  = 40000.0;
+    /// Whether to drop ENABLE when idle. Stays false on anything gravity-
+    /// loaded: ENABLE is a torque switch, and releasing it lets the axis fall.
+    bool   idleDisable            = false;
 };
 
 /// Per-channel bounds for FIZ (focus/iris/zoom) setpoints, in percent.

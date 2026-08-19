@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include "hardware/device_adapter.h"
-#include "infrastructure/gantry/gantryaxiscontroller.h"
+#include "infrastructure/gantry/axis_controller_base.h"
 #include <QMetaObject>
 
 namespace hardware {
@@ -12,7 +12,7 @@ namespace hardware {
 class GantryAdapter : public IDeviceAdapter {
     Q_OBJECT
 public:
-    explicit GantryAdapter(GantryAxisController* controller, QObject* parent = nullptr)
+    explicit GantryAdapter(AxisControllerBase* controller, QObject* parent = nullptr)
         : IDeviceAdapter(parent), m_controller(controller)
     {}
 
@@ -34,7 +34,7 @@ public:
         if (ok) {
             // In Fire-Together mode, we just issue a new tick target and let the internal PID handle it.
             // A more advanced integration would adjust the Gantry speed to match `expectedDurationSec`.
-            // GantryAxisController lives on its own thread (see MainWindow::initServices), so this
+            // The axis controller lives on its own thread (see MainWindow::initServices), so this
             // must be marshaled via a queued invoke rather than called directly cross-thread.
             QMetaObject::invokeMethod(m_controller, "tick", Qt::QueuedConnection,
                                        Q_ARG(double, targetMm));
@@ -68,7 +68,7 @@ public:
     }
 
 private:
-    GantryAxisController* m_controller;
+    AxisControllerBase* m_controller;
 };
 
 } // namespace hardware

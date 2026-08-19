@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include "application/gantryservice.h"
-#include "infrastructure/gantry/gantryaxiscontroller.h"
+#include "infrastructure/gantry/axis_controller_base.h"
 #include <algorithm>
 #include <cmath>
 
@@ -12,9 +12,9 @@ GantryService::GantryService(QObject* parent)
 {
 }
 
-void GantryService::initialize(GantryAxisController* gantryController)
+void GantryService::initialize(AxisControllerBase* axisController)
 {
-    m_controller = gantryController;
+    m_controller = axisController;
 }
 
 // ─── Teaching ───────────────────────────────────────────────────────────────────

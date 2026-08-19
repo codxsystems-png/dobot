@@ -243,6 +243,9 @@ QJsonObject ProjectService::projectToJson() const
     motorSpec["maxAccelMmPerSec2"] = m_project.gantryMotorSpec.maxAccelMmPerSec2;
     motorSpec["configured"]        = m_project.gantryMotorSpec.configured;
     motorSpec["axisType"]          = static_cast<int>(m_project.gantryMotorSpec.axisType);
+    motorSpec["driveKind"]         = static_cast<int>(m_project.gantryMotorSpec.driveKind);
+    motorSpec["pulsesPerRev"]      = m_project.gantryMotorSpec.pulsesPerRev;
+    motorSpec["stepRateCeilingHz"] = m_project.gantryMotorSpec.stepRateCeilingHz;
     obj["gantryMotorSpec"] = motorSpec;
 
     QJsonObject tuning;
@@ -254,6 +257,8 @@ QJsonObject ProjectService::projectToJson() const
     tuning["pidKi"]          = m_project.gantryTuning.pidKi;
     tuning["pidKd"]          = m_project.gantryTuning.pidKd;
     tuning["configured"]     = m_project.gantryTuning.configured;
+    tuning["stepAccelStepsPerSec2"] = m_project.gantryTuning.stepAccelStepsPerSec2;
+    tuning["idleDisable"]           = m_project.gantryTuning.idleDisable;
     obj["gantryTuning"] = tuning;
     QJsonArray gantryArray;
     for (const auto& kf : m_project.gantryKeyframes) {
@@ -353,6 +358,13 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
         m_project.gantryMotorSpec.configured        = motorSpec["configured"].toBool(false);
         m_project.gantryMotorSpec.axisType =
             static_cast<GantryAxisType>(motorSpec["axisType"].toInt(0)); // 0 == Linear
+        // Absent in files written before steppers existed, and 0 is DcServoPwm,
+        // so every one of those loads as exactly the axis it always was.
+        m_project.gantryMotorSpec.driveKind =
+            static_cast<AxisDriveKind>(motorSpec["driveKind"].toInt(0));
+        m_project.gantryMotorSpec.pulsesPerRev = motorSpec["pulsesPerRev"].toDouble(1600.0);
+        m_project.gantryMotorSpec.stepRateCeilingHz =
+            motorSpec["stepRateCeilingHz"].toDouble(8000.0);
     } else {
         m_project.gantryMotorSpec = GantryMotorSpec(); // old project file — behave exactly as before
     }
@@ -367,6 +379,8 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
         m_project.gantryTuning.pidKi              = tuning["pidKi"].toDouble(0.1);
         m_project.gantryTuning.pidKd              = tuning["pidKd"].toDouble(0.05);
         m_project.gantryTuning.configured         = tuning["configured"].toBool(false);
+        m_project.gantryTuning.stepAccelStepsPerSec2 = tuning["stepAccelStepsPerSec2"].toDouble(40000.0);
+        m_project.gantryTuning.idleDisable           = tuning["idleDisable"].toBool(false);
     } else {
         // Project predates the tuning block — take defaults, but migrate the
         // legacy counts/mm so an existing calibration isn't silently lost.

@@ -48,6 +48,9 @@ class FizService;
 class FizPanel;
 class FizTrackWidget;
 class GantryAxisController;
+class StepperAxisController;
+class AxisControllerBase;
+class AxisBoardLink;
 class GantryService;
 class PathRecorderService;
 
@@ -156,7 +159,23 @@ private:
     PointsModel*        m_pointsModel      = nullptr;
     NucleusService*    m_nucleusService    = nullptr;
     FizService*        m_fizService        = nullptr;
-    GantryAxisController* m_gantryController = nullptr;
+    // Both axis kinds exist on one board and share one serial link, mirroring
+    // the firmware's own layout: axis 0 is the DC servo, axis 1 the stepper.
+    // Which one drives the timeline is chosen by the project's drive kind; the
+    // other simply sits idle rather than being torn down and rebuilt whenever
+    // the setting changes.
+    AxisBoardLink*         m_axisLink          = nullptr;
+    GantryAxisController*  m_gantryController  = nullptr;
+    StepperAxisController* m_stepperController = nullptr;
+    /// Whichever of the two the project selects. Everything that does not care
+    /// about the drive kind goes through this.
+    AxisControllerBase*    m_axisController    = nullptr;
+
+    /// Re-points m_axisController at the controller the project's drive kind
+    /// selects, and re-wires the playback path to it.
+    void selectAxisControllerForDriveKind();
+    /// True when the active axis is a stepper, which has no PID to tune.
+    bool activeAxisIsStepper() const;
     GantryService*     m_gantryService     = nullptr;
     PathRecorderService* m_pathRecorder    = nullptr;
 
