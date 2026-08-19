@@ -172,3 +172,17 @@ target_sources(test_playback_engine_gating PRIVATE
     ${CMAKE_SOURCE_DIR}/src/timeline/playback_engine.cpp
     ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
 )
+
+# Test: Stepper Axis Controller (CL57C step/dir axis, via FakeSerialTransport)
+add_cambot_test(test_stepper_axis_controller test_stepper_axis_controller.cpp)
+target_sources(test_stepper_axis_controller PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/stepper_axis_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/qt_serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/fake_serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
+)

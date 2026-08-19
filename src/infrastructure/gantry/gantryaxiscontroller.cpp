@@ -19,7 +19,7 @@ GantryAxisController::GantryAxisController(AxisBoardLink* link, int axisIndex, Q
 }
 
 GantryAxisController::GantryAxisController(ISerialTransport* transport, QObject* parent)
-    : AxisControllerBase(transport, parent)
+    : AxisControllerBase(transport, 0, parent)   // DC servo is axis 0
 {
 }
 

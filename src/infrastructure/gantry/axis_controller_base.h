@@ -34,7 +34,12 @@ public:
     /// Builds and owns a private link over `transport` — for a single-axis rig
     /// and for tests. transport == nullptr uses the real QSerialPort-backed
     /// one, or a no-op when Qt6::SerialPort is absent.
-    explicit AxisControllerBase(ISerialTransport* transport = nullptr, QObject* parent = nullptr);
+    ///
+    /// axisIndex is explicit and undefaulted on purpose: which address a
+    /// controller answers to is a property of the board layout, and letting it
+    /// default put every transport-owning controller at axis 0 regardless of
+    /// what it actually was. Each subclass supplies its own.
+    AxisControllerBase(ISerialTransport* transport, int axisIndex, QObject* parent = nullptr);
 
     ~AxisControllerBase() override;
 

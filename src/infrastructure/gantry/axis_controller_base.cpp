@@ -16,11 +16,11 @@ AxisControllerBase::AxisControllerBase(AxisBoardLink* link, int axisIndex, QObje
     wireLink();
 }
 
-AxisControllerBase::AxisControllerBase(ISerialTransport* transport, QObject* parent)
+AxisControllerBase::AxisControllerBase(ISerialTransport* transport, int axisIndex, QObject* parent)
     : QObject(parent)
     , m_link(new AxisBoardLink(transport, this))
     , m_ownsLink(true)
-    , m_axisIndex(0)
+    , m_axisIndex(axisIndex)
 {
     wireLink();
 }
