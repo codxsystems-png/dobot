@@ -1,4 +1,5 @@
 #pragma once
+#include <QHash>
 // ═══════════════════════════════════════════════════════════════════════════════
 // CamBotTimeline — Playback Service (MRMC Engine Wrapper)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -66,6 +67,12 @@ public slots:
     void setAdditionalServices(GantryService* gs, FizService* fs,
                                AxisControllerBase* axis, NucleusService* ns);
 
+    /// Registers (or re-points) the playback adapter for one axis id beyond
+    /// the primary. Without this an extra axis compiles to a track that the
+    /// engine then streams into nothing — no error, just an axis that never
+    /// moves, which is the failure mode this whole area keeps producing.
+    void registerAxisAdapter(const QString& axisId, AxisControllerBase* controller);
+
     // So compileAndLoadTimeline() can read the current gantry motor spec
     // (RPM/gear ratio/etc.) and pass it through to TimelineCompiler.
     void setProjectService(ProjectService* ps) { m_projectService = ps; }
@@ -83,6 +90,9 @@ private slots:
     void onEngineStateChanged(timeline::PlaybackEngine::State newState);
 
 private:
+    /// Adapters for axes beyond the primary, keyed by axis id.
+    QHash<QString, hardware::GantryAdapter*> m_axisAdapters;
+
     void compileAndLoadTimeline();
 
     ConnectionService* m_connService = nullptr;

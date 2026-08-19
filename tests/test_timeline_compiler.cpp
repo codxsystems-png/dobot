@@ -238,6 +238,117 @@ private slots:
                  tlNullptr->track("gantry")->validateLimits(err2));
         QVERIFY(tlUnconfigured->track("gantry")->validateLimits(err1)); // both feasible at default limits
     }
+
+    // ─── Additional external axes ─────────────────────────────────────────
+
+    /// A second axis must compile to its own track under its own id. Without
+    /// this the axis is configurable and connectable but has nothing on the
+    /// timeline to drive it — it simply never moves.
+    void testExtraAxisGetsItsOwnTrack()
+    {
+        PointsModel   pts;
+        SegmentsModel segs(&pts);
+        GantryService gantry;
+
+        timeline::AxisTrackInput extra;
+        extra.config.id = "tilt_head";
+        GantryKeyframe k;
+        k.id = "t1"; k.time = 1.0; k.positionMm = 45.0;
+        extra.keyframes = { k };
+        QList<timeline::AxisTrackInput> axes{ extra };
+
+        auto tl = timeline::TimelineCompiler::compile(&segs, &pts, &gantry, nullptr,
+                                                      nullptr, nullptr, &axes);
+
+        bool found = false;
+        for (const auto& t : tl->allTracks()) {
+            if (t->trackId() == "tilt_head") {
+                found = true;
+                QCOMPARE(t->keyframes().size(), 1);
+                QCOMPARE(t->keyframes().first().time, 1.0);
+            }
+        }
+        QVERIFY2(found, "the extra axis must appear as its own track");
+    }
+
+    /// Each axis is limited by ITS OWN spec. Checking every axis against the
+    /// primary's numbers would either reject reachable moves or, worse, admit
+    /// moves a slower axis cannot make.
+    void testExtraAxisUsesItsOwnTravelRange()
+    {
+        PointsModel   pts;
+        SegmentsModel segs(&pts);
+        GantryService gantry;
+
+        timeline::AxisTrackInput extra;
+        extra.config.id = "tilt_head";
+        extra.config.tuning.configured   = true;
+        extra.config.tuning.travelLimits = {0.0, 90.0};
+
+        GantryKeyframe k;
+        k.id = "t1"; k.time = 1.0; k.positionMm = 500.0;   // far outside 0..90
+        extra.keyframes = { k };
+        QList<timeline::AxisTrackInput> axes{ extra };
+
+        auto tl = timeline::TimelineCompiler::compile(&segs, &pts, &gantry, nullptr,
+                                                      nullptr, nullptr, &axes);
+
+        QStringList errors;
+        QVERIFY2(!tl->validateLimits(errors),
+                 "a keyframe outside the extra axis's own travel range must be "
+                 "rejected by preflight");
+    }
+
+    /// The primary axis is still compiled from GantryService, so passing extra
+    /// axes must not disturb it — that is what keeps existing projects
+    /// compiling to exactly the timeline they always did.
+    void testExtraAxesDoNotDisturbThePrimary()
+    {
+        PointsModel   pts;
+        SegmentsModel segs(&pts);
+        GantryService gantry;
+        GantryKeyframe g;
+        g.id = "g1"; g.time = 2.0; g.positionMm = 10.0;
+        gantry.addKeyframe(g);
+
+        timeline::AxisTrackInput extra;
+        extra.config.id = "tilt_head";
+        QList<timeline::AxisTrackInput> axes{ extra };
+
+        auto tl = timeline::TimelineCompiler::compile(&segs, &pts, &gantry, nullptr,
+                                                      nullptr, nullptr, &axes);
+
+        bool foundPrimary = false;
+        for (const auto& t : tl->allTracks()) {
+            if (t->trackId() == "gantry") {
+                foundPrimary = true;
+                QCOMPARE(t->keyframes().size(), 1);
+            }
+        }
+        QVERIFY2(foundPrimary, "the primary gantry track must still be compiled");
+    }
+
+    /// An entry claiming to be the primary must be ignored rather than
+    /// producing a second "gantry" track that silently shadows the real one.
+    void testAxisClaimingThePrimaryIdIsIgnored()
+    {
+        PointsModel   pts;
+        SegmentsModel segs(&pts);
+        GantryService gantry;
+
+        timeline::AxisTrackInput dupe;
+        dupe.config.id = "gantry";
+        QList<timeline::AxisTrackInput> axes{ dupe };
+
+        auto tl = timeline::TimelineCompiler::compile(&segs, &pts, &gantry, nullptr,
+                                                      nullptr, nullptr, &axes);
+
+        int gantryTracks = 0;
+        for (const auto& t : tl->allTracks()) {
+            if (t->trackId() == "gantry") gantryTracks++;
+        }
+        QVERIFY2(gantryTracks <= 1, "must never compile two tracks with the same id");
+    }
 };
 
 QTEST_MAIN(TestTimelineCompiler)

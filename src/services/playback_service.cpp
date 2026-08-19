@@ -80,6 +80,23 @@ void PlaybackService::setAdditionalServices(GantryService* gs, FizService* fs,
     }
 }
 
+void PlaybackService::registerAxisAdapter(const QString& axisId, AxisControllerBase* controller)
+{
+    if (axisId.isEmpty() || !controller || !m_engine) return;
+
+    auto it = m_axisAdapters.find(axisId);
+    if (it == m_axisAdapters.end()) {
+        auto* adapter = new hardware::GantryAdapter(controller, this);
+        m_axisAdapters.insert(axisId, adapter);
+        m_engine->addAdapter(axisId, adapter);
+    } else {
+        // Re-point rather than rebuild: the adapter stays registered with the
+        // engine under this id, so replacing it would leave the engine holding
+        // the old one.
+        (*it)->setController(controller);
+    }
+}
+
 void PlaybackService::compileAndLoadTimeline()
 {
     if (!m_engine) return;
@@ -87,8 +104,25 @@ void PlaybackService::compileAndLoadTimeline()
     // Convert old UI models to MRMC Timeline
     const GantryMotorSpec* spec   = m_projectService ? &m_projectService->project().gantryMotorSpec : nullptr;
     const GantryTuning*    tuning = m_projectService ? &m_projectService->project().gantryTuning    : nullptr;
+
+    // Every axis after the first gets its own track, with its own limits. The
+    // primary stays on the GantryService path so existing projects compile to
+    // exactly the timeline they always did.
+    QList<timeline::AxisTrackInput> extraAxes;
+    if (m_projectService) {
+        const Project& p = m_projectService->project();
+        for (const AxisConfig& axis : p.axes) {
+            if (axis.id.isEmpty() || axis.id == "gantry") continue;
+            timeline::AxisTrackInput in;
+            in.config    = axis;
+            in.keyframes = p.axisKeyframes.value(axis.id);
+            extraAxes.append(in);
+        }
+    }
+
     auto timeline = timeline::TimelineCompiler::compile(m_segModel, m_ptModel, m_gantryService,
-                                                        m_fizService, spec, tuning);
+                                                        m_fizService, spec, tuning,
+                                                        extraAxes.isEmpty() ? nullptr : &extraAxes);
     m_engine->setTimeline(timeline);
     // playbackCompleted() previously never fired because the engine had no
     // notion of "the end" — wire it to the same duration the timeline UI

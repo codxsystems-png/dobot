@@ -14,7 +14,8 @@ std::shared_ptr<Timeline> TimelineCompiler::compile(SegmentsModel* segments,
                                                     GantryService* gantry,
                                                     FizService* fiz,
                                                     const GantryMotorSpec* motorSpec,
-                                                    const GantryTuning* tuning)
+                                                    const GantryTuning* tuning,
+                                                    const QList<AxisTrackInput>* extraAxes)
 {
     auto timeline = std::make_shared<Timeline>();
 
@@ -103,6 +104,39 @@ std::shared_ptr<Timeline> TimelineCompiler::compile(SegmentsModel* segments,
                 gantryTrack->addKeyframe(tkf);
             }
             timeline->addTrack(gantryTrack);
+        }
+
+        // ─── Additional external axes ────────────────────────────────────
+        // One track each, keyed by the axis's own id. Each gets limits derived
+        // from ITS OWN motor spec and travel range, so preflight rejects a
+        // keyframe that axis cannot reach rather than checking every axis
+        // against the primary's numbers.
+        if (extraAxes) {
+            for (const AxisTrackInput& axis : *extraAxes) {
+                if (axis.config.id.isEmpty() || axis.config.id == "gantry") continue;
+
+                auto track = std::make_shared<GantryTrack>(axis.config.id);
+
+                if (axis.config.motorSpec.configured) {
+                    const double vMax =
+                        motion::deriveMaxGantryVelocityUnitsPerSec(axis.config.motorSpec);
+                    if (vMax > 0.0) {
+                        track->setLimits(vMax, axis.config.motorSpec.maxAccelMmPerSec2);
+                    }
+                }
+                if (axis.config.tuning.configured) {
+                    track->setRangeLimits(axis.config.tuning.travelLimits);
+                }
+
+                for (const auto& gkf : axis.keyframes) {
+                    TrackKeyframe tkf;
+                    tkf.id    = gkf.id + "_" + axis.config.id;
+                    tkf.time  = gkf.time;
+                    tkf.value = QVariant::fromValue(gkf.positionMm);
+                    track->addKeyframe(tkf);
+                }
+                timeline->addTrack(track);
+            }
         }
 
         // Merge standalone FIZ keyframes from FizService

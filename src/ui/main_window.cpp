@@ -1127,6 +1127,13 @@ void MainWindow::refreshAxisPointers()
     if (m_playbackService) {
         m_playbackService->setAdditionalServices(m_gantryService, m_fizService,
                                                  m_axisController, m_nucleusService);
+
+        // Every axis past the first needs its own adapter, or its compiled
+        // track streams into nothing: no error, just an axis that never moves.
+        for (const QString& id : m_axisManager->axisIds()) {
+            if (id == "gantry") continue;
+            m_playbackService->registerAxisAdapter(id, m_axisManager->controller(id));
+        }
     }
 }
 
