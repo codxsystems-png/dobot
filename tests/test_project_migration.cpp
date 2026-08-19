@@ -27,7 +27,9 @@ const char* kV1Project = R"JSON({
   "name": "Old Shoot",
   "version": "1.2.0",
   "timelineDuration": 42.5,
-  "points": [],
+  "points": [
+    { "id": "p1", "name": "Wide", "gantryPositionMm": 123.75 }
+  ],
   "segments": [],
   "gantryEncoderCountsPerMm": 2709.2,
   "gantryMotorSpec": {
@@ -278,6 +280,75 @@ private slots:
 
         QCOMPARE(svc.project().axes.size(), 1);
         QCOMPARE(svc.project().axes.first().id, QString("gantry"));
+    }
+
+    // ─── Taught point positions ───────────────────────────────────────────
+
+    /// A point taught before multi-axis has only the frozen field. It must
+    /// still answer axisPosition("gantry") correctly, or every such point
+    /// silently reads as position 0 — which on a timeline means the axis
+    /// slamming to one end of its travel.
+    void testV1PointSeedsThePrimaryAxisPosition()
+    {
+        QTemporaryDir dir;
+        ProjectService svc(nullptr);
+        QVERIFY(svc.loadProject(writeTemp(dir, "v1.crp", kV1Project)));
+
+        QCOMPARE(svc.project().points.size(), 1);
+        const CameraPoint& pt = svc.project().points.first();
+
+        QCOMPARE(pt.gantryPositionMm, 123.75);
+        QCOMPARE(pt.axisPosition("gantry"), 123.75);
+        QVERIFY2(pt.axisPositions.contains("gantry"),
+                 "the map must be seeded from the frozen field on load");
+    }
+
+    /// Writing through setAxisPosition must update BOTH representations, so
+    /// motion_estimator and timeline_compiler — which read the frozen field
+    /// directly — never see a stale value.
+    void testSettingPrimaryAxisUpdatesTheFrozenField()
+    {
+        CameraPoint pt;
+        pt.setAxisPosition("gantry", 42.5);
+
+        QCOMPARE(pt.gantryPositionMm, 42.5);
+        QCOMPARE(pt.axisPosition("gantry"), 42.5);
+    }
+
+    /// A non-primary axis must NOT disturb the frozen field.
+    void testSecondaryAxisDoesNotTouchTheFrozenField()
+    {
+        CameraPoint pt;
+        pt.setAxisPosition("gantry", 10.0);
+        pt.setAxisPosition("tilt_head", 99.0);
+
+        QCOMPARE(pt.gantryPositionMm, 10.0);
+        QCOMPARE(pt.axisPosition("tilt_head"), 99.0);
+        QCOMPARE(pt.axisPosition("gantry"), 10.0);
+    }
+
+    /// An axis the point was never taught for reads 0, not garbage.
+    void testUnknownAxisReadsZero()
+    {
+        CameraPoint pt;
+        QCOMPARE(pt.axisPosition("never_taught"), 0.0);
+    }
+
+    void testPointAxisPositionsRoundTrip()
+    {
+        QTemporaryDir dir;
+        ProjectService a(nullptr);
+        QVERIFY(a.loadProject(writeTemp(dir, "v1.crp", kV1Project)));
+
+        const QString out = dir.filePath("pts.crp");
+        QVERIFY(a.saveProjectAs(out));
+
+        ProjectService b(nullptr);
+        QVERIFY(b.loadProject(out));
+        const CameraPoint& pt = b.project().points.first();
+
+        QCOMPARE(pt.gantryPositionMm, 123.75);
+        QCOMPARE(pt.axisPosition("gantry"), 123.75);
     }
 };
 

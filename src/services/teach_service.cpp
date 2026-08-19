@@ -62,7 +62,9 @@ void TeachService::recordPoint(const QString& name)
     }
     
     if (m_gantryService) {
-        pt.gantryPositionMm = m_gantryService->currentPositionMm();
+        // setAxisPosition writes the frozen field too, so nothing that reads
+        // only gantryPositionMm goes stale.
+        pt.setAxisPosition("gantry", m_gantryService->currentPositionMm());
     }
 
     // Add to model

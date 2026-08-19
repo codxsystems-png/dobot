@@ -210,7 +210,32 @@ struct CameraPoint {
     QImage        thumbnail;   // 160×90 JPEG
     QDateTime     recorded;
     FizState      fizState;    // FIZ motor positions when point was recorded
+    // FROZEN field name. Stays the store for the PRIMARY axis, because
+    // motion_estimator, timeline_compiler and the teach flow all read it
+    // directly and a rename would touch every one of them for no gain.
     double        gantryPositionMm = 0.0; // Gantry position when point was recorded
+
+    /// Position of every axis when the point was taught, keyed by axis id.
+    ///
+    /// The primary axis appears BOTH here (as "gantry") and in
+    /// gantryPositionMm above, kept in step by axisPosition()/setAxisPosition().
+    /// Same reasoning as Project::axes: consumers migrate one at a time, and
+    /// an older build still finds the flat field it expects.
+    QMap<QString, double> axisPositions;
+
+    /// Position of `axisId`, falling back to the frozen field for the primary
+    /// axis so a point taught before multi-axis still answers correctly.
+    double axisPosition(const QString& axisId) const {
+        if (axisPositions.contains(axisId)) return axisPositions.value(axisId);
+        return (axisId == "gantry") ? gantryPositionMm : 0.0;
+    }
+
+    /// Writes both representations for the primary axis, so nothing that
+    /// reads only the frozen field goes stale.
+    void setAxisPosition(const QString& axisId, double units) {
+        axisPositions.insert(axisId, units);
+        if (axisId == "gantry") gantryPositionMm = units;
+    }
 };
 
 // ─── Timeline Segment ─────────────────────────────────────────────────────────

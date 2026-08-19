@@ -622,7 +622,12 @@ QJsonObject ProjectService::pointToJson(const CameraPoint& pt) const
     obj["fizState"] = fiz;
 
     // Gantry
-    obj["gantryPositionMm"] = pt.gantryPositionMm;
+    obj["gantryPositionMm"] = pt.gantryPositionMm;   // frozen key, always written
+    QJsonObject axisPos;
+    for (auto it = pt.axisPositions.constBegin(); it != pt.axisPositions.constEnd(); ++it) {
+        axisPos[it.key()] = it.value();
+    }
+    obj["axisPositions"] = axisPos;
 
     return obj;
 }
@@ -666,6 +671,18 @@ CameraPoint ProjectService::pointFromJson(const QJsonObject& obj) const
 
     // Gantry state
     pt.gantryPositionMm = obj["gantryPositionMm"].toDouble(0.0);
+    if (obj.contains("axisPositions")) {
+        const QJsonObject axisPos = obj["axisPositions"].toObject();
+        for (auto it = axisPos.constBegin(); it != axisPos.constEnd(); ++it) {
+            pt.axisPositions.insert(it.key(), it.value().toDouble());
+        }
+    }
+    // A point taught before multi-axis has no map at all. Seed the primary
+    // entry from the frozen field so axisPosition("gantry") answers the same
+    // either way, and callers never have to know which era a point is from.
+    if (!pt.axisPositions.contains("gantry")) {
+        pt.axisPositions.insert("gantry", pt.gantryPositionMm);
+    }
 
     return pt;
 }
