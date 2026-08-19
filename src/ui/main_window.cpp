@@ -350,6 +350,7 @@ void MainWindow::createCentralLayout()
         connect(m_projectService, &ProjectService::projectLoaded, this, [this]() {
             m_segmentsModel->setGantryMotorSpec(m_projectService->project().gantryMotorSpec);
             pushGantryTuning();
+            refreshTrackWidgetAxes();
         });
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 m_segmentsModel, &SegmentsModel::setGantryMotorSpec);
@@ -357,6 +358,12 @@ void MainWindow::createCentralLayout()
         // actually carries a change of it.
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 this, [this](const GantryMotorSpec&) { selectAxisControllerForDriveKind(); });
+        // Travel limits define each axis row's vertical scale, so the rows are
+        // rebuilt whenever the tuning or the axis list changes.
+        connect(m_projectService, &ProjectService::gantryTuningChanged,
+                this, [this](const GantryTuning&) { refreshTrackWidgetAxes(); });
+        connect(m_projectService, &ProjectService::axesChanged,
+                this, [this](const QList<AxisConfig>&) { refreshTrackWidgetAxes(); });
         // Axis type drives the units shown on the jog readout (mm vs degrees).
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 this, [this](const GantryMotorSpec& spec) {
@@ -415,8 +422,8 @@ void MainWindow::createCentralLayout()
     m_timelineView->setMinimumHeight(120);
     m_timelineView->setMaximumHeight(220);
     timelineVlay->addWidget(m_timelineView, 1);
-    m_fizTrackWidget->setMinimumHeight(152);
-    m_fizTrackWidget->setMaximumHeight(152);
+    // Height follows the row count now — the widget fixes its own height in
+    // relayout(), and pinning it here would clip every axis past the first.
     timelineVlay->addWidget(m_fizTrackWidget, 0);
 
     // Bottom row: Properties | Points Library | Camera (primary)
@@ -1107,6 +1114,31 @@ bool MainWindow::activeAxisIsStepper() const
     if (!m_projectService) return false;
     return m_projectService->project().gantryMotorSpec.driveKind
            == AxisDriveKind::StepDirClosedLoop;
+}
+
+void MainWindow::refreshTrackWidgetAxes()
+{
+    if (!m_fizTrackWidget || !m_projectService) return;
+
+    QList<FizTrackWidget::AxisRow> rows;
+    QList<AxisConfig> axes = m_projectService->project().axes;
+    if (axes.isEmpty()) {
+        AxisConfig primary;
+        primary.tuning = m_projectService->project().gantryTuning;
+        axes.append(primary);
+    }
+    for (const AxisConfig& a : axes) {
+        FizTrackWidget::AxisRow row;
+        row.id   = a.id;
+        row.name = a.displayName.isEmpty() ? a.id.toUpper() : a.displayName.toUpper();
+        // The row's scale IS the axis's travel range. Previously two constants
+        // stood in for this and disagreed with each other, so a keyframe
+        // dropped by double-click redrew somewhere else.
+        row.rangeMin = a.tuning.travelLimits.minMm;
+        row.rangeMax = a.tuning.travelLimits.maxMm;
+        rows.append(row);
+    }
+    m_fizTrackWidget->setAxes(rows);
 }
 
 void MainWindow::refreshAxisPointers()

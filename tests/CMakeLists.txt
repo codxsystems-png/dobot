@@ -234,3 +234,10 @@ target_sources(test_axis_manager PRIVATE
     ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
     ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
 )
+
+# Test: Track widget axis rows and value scale
+add_cambot_test(test_track_widget_scale test_track_widget_scale.cpp)
+target_sources(test_track_widget_scale PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/presentation/widgets/fiztrackwidget.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/widgets/fiztrackwidget.h
+)

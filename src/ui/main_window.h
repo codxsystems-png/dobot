@@ -180,6 +180,9 @@ private:
     /// Re-reads the active controller from the manager and re-points
     /// everything that caches it.
     void refreshAxisPointers();
+    /// Rebuilds the timeline's axis rows from the project, including each
+    /// row's travel range, which is what the row's vertical scale uses.
+    void refreshTrackWidgetAxes();
     /// True when the active axis is a stepper, which has no PID to tune.
     bool activeAxisIsStepper() const;
     GantryService*     m_gantryService     = nullptr;
