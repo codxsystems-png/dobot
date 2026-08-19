@@ -281,10 +281,21 @@ struct AxisConfig {
     GantryMotorSpec motorSpec;
     GantryTuning    tuning;
 
-    /// Serial port, and which axis address this is on that board. Several
-    /// axes can share a port and are distinguished by the index.
+    /// Serial port shared with any other axes on the same board.
     QString portName;
-    int     firmwareAxisIndex = 0;
+
+    /// Board address of this axis's DC-servo channel.
+    int firmwareAxisIndex = 0;
+
+    /// Board address of this axis's STEP/DIR channel.
+    ///
+    /// Deliberately separate from firmwareAxisIndex: the firmware gives each
+    /// DRIVE KIND its own address (it enumerates "A 0 DC", "A 1 STEP"), so one
+    /// logical axis occupies two of them and which is live follows the drive
+    /// kind. Using a single index put both controllers on the same address,
+    /// where the second silently took over the first's replies — the DC axis
+    /// then never saw its own encoder or limit switch.
+    int firmwareStepIndex = 1;
 };
 
 struct Project {

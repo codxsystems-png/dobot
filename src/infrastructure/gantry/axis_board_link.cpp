@@ -50,7 +50,21 @@ QStringList AxisBoardLink::availablePorts() const
 
 void AxisBoardLink::registerAxis(int axis, IAxisReplyHandler* handler)
 {
-    if (handler) m_handlers.insert(axis, handler);
+    if (!handler) return;
+
+    // Two handlers on one address is always a wiring mistake, and it fails in
+    // the worst possible way: the newcomer silently takes over the incumbent's
+    // replies, so the displaced axis simply stops hearing about its own
+    // encoder, limit switch and faults — with no error anywhere. Say so.
+    auto existing = m_handlers.constFind(axis);
+    if (existing != m_handlers.constEnd() && *existing != handler) {
+        StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+            "AxisBoardLink",
+            QString("Axis %1 already had a reply handler; the new one takes over and "
+                    "the previous axis will stop receiving its replies. Two controllers "
+                    "share a board address.").arg(axis));
+    }
+    m_handlers.insert(axis, handler);
 }
 
 void AxisBoardLink::unregisterAxis(int axis)

@@ -41,8 +41,11 @@ void AxisManager::buildSlot(const AxisConfig& axis)
 
     // Both kinds, always. See the header for why building only the selected
     // one would cost a serial reconnect on every settings change.
+    // Each kind gets its OWN board address. Sharing one index registers both
+    // controllers as the handler for the same axis, and the second silently
+    // takes over the first's replies.
     slot.dc      = new GantryAxisController(slot.link, axis.firmwareAxisIndex);
-    slot.stepper = new StepperAxisController(slot.link, axis.firmwareAxisIndex);
+    slot.stepper = new StepperAxisController(slot.link, axis.firmwareStepIndex);
     if (m_thread) {
         slot.dc->moveToThread(m_thread);
         slot.stepper->moveToThread(m_thread);

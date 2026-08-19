@@ -239,6 +239,43 @@ private slots:
         mgr.configure({ makeAxis("gantry", AxisDriveKind::StepDirClosedLoop) });
         QCOMPARE(mgr.linkFor("gantry"), link);   // switching must not drop it
     }
+
+    // ─── Board addressing ─────────────────────────────────────────────────
+
+    /// The two drive kinds occupy DIFFERENT board addresses — the firmware
+    /// enumerates "A 0 DC" and "A 1 STEP". Building both at one index made the
+    /// stepper overwrite the DC controller as the handler for axis 0, so every
+    /// Q and H reply went to the stepper: the DC axis stopped seeing its
+    /// encoder and its limit switch, and homing timed out waiting for a reply
+    /// that was being delivered elsewhere. The stepper meanwhile addressed
+    /// axis 0 and the board rejected every command as "not a step axis".
+    void testDriveKindsGetDifferentBoardAddresses()
+    {
+        AxisManager mgr(nullptr);
+        AxisConfig a = makeAxis("gantry", AxisDriveKind::DcServoPwm);
+        a.firmwareAxisIndex = 0;   // DC channel
+        a.firmwareStepIndex = 1;   // STEP/DIR channel
+        mgr.configure({ a });
+
+        QCOMPARE(mgr.dcController("gantry")->axisIndex(), 0);
+        QCOMPARE(mgr.stepperController("gantry")->axisIndex(), 1);
+        QVERIFY2(mgr.dcController("gantry")->axisIndex()
+                     != mgr.stepperController("gantry")->axisIndex(),
+                 "the two kinds must never share a board address");
+    }
+
+    /// And the defaults must already be correct, because the first axis of
+    /// every existing project is created from a default-constructed
+    /// AxisConfig — that is exactly the path that broke.
+    void testDefaultConfigAlreadySeparatesTheAddresses()
+    {
+        AxisManager mgr(nullptr);
+        AxisConfig defaults;               // untouched
+        mgr.configure({ defaults });
+
+        QCOMPARE(mgr.dcController("gantry")->axisIndex(), 0);
+        QCOMPARE(mgr.stepperController("gantry")->axisIndex(), 1);
+    }
 };
 
 QTEST_MAIN(TestAxisManager)

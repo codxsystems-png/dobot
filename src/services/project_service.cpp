@@ -25,6 +25,7 @@ QJsonObject axisToJson(const AxisConfig& a)
     o["displayName"]       = a.displayName;
     o["portName"]          = a.portName;
     o["firmwareAxisIndex"] = a.firmwareAxisIndex;
+    o["firmwareStepIndex"] = a.firmwareStepIndex;
 
     QJsonObject spec;
     spec["motorRpm"]          = a.motorSpec.motorRpm;
@@ -60,6 +61,7 @@ AxisConfig axisFromJson(const QJsonObject& o)
     a.displayName       = o["displayName"].toString("Gantry");
     a.portName          = o["portName"].toString();
     a.firmwareAxisIndex = o["firmwareAxisIndex"].toInt(0);
+    a.firmwareStepIndex = o["firmwareStepIndex"].toInt(1);
 
     const QJsonObject spec = o["motorSpec"].toObject();
     a.motorSpec.motorRpm          = spec["motorRpm"].toDouble(3000.0);
