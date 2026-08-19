@@ -51,6 +51,7 @@ class GantryAxisController;
 class StepperAxisController;
 class AxisControllerBase;
 class AxisBoardLink;
+class AxisManager;
 class GantryService;
 class PathRecorderService;
 
@@ -173,7 +174,12 @@ private:
 
     /// Re-points m_axisController at the controller the project's drive kind
     /// selects, and re-wires the playback path to it.
+    AxisManager* m_axisManager = nullptr;
+
     void selectAxisControllerForDriveKind();
+    /// Re-reads the active controller from the manager and re-points
+    /// everything that caches it.
+    void refreshAxisPointers();
     /// True when the active axis is a stepper, which has no PID to tune.
     bool activeAxisIsStepper() const;
     GantryService*     m_gantryService     = nullptr;

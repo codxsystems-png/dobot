@@ -25,6 +25,7 @@
 #include "infrastructure/gantry/gantryaxiscontroller.h"
 #include "infrastructure/gantry/stepper_axis_controller.h"
 #include "infrastructure/gantry/axis_board_link.h"
+#include "infrastructure/gantry/axis_manager.h"
 #include "core/structured_logger.h"
 #include "application/gantryservice.h"
 #include "services/path_recorder_service.h"
@@ -133,24 +134,24 @@ void MainWindow::initServices()
     // drive kind decides which one the timeline actually drives. Building only
     // the selected one would mean tearing down and rebuilding the serial
     // connection every time that setting changed.
-    m_axisLink = new AxisBoardLink();
-    m_axisLink->moveToThread(m_gantryThread);
-    connect(m_gantryThread, &QThread::finished, m_axisLink, &QObject::deleteLater);
+    // AxisManager owns the links, the controllers, and which one drives
+    // each axis. MainWindow keeps m_gantryController and m_axisController
+    // as views onto it so the ~117 existing references stay valid; they
+    // get retired call site by call site rather than in one sweep.
+    m_axisManager = new AxisManager(m_gantryThread, this);
 
-    m_gantryController  = new GantryAxisController(m_axisLink, 0);
-    m_stepperController = new StepperAxisController(m_axisLink, 1);
-    m_gantryController->moveToThread(m_gantryThread);
-    m_stepperController->moveToThread(m_gantryThread);
-    connect(m_gantryThread, &QThread::finished, m_gantryController, &QObject::deleteLater);
-    connect(m_gantryThread, &QThread::finished, m_stepperController, &QObject::deleteLater);
+    AxisConfig primaryAxis;   // defaults = the DC gantry every project has had
+    m_axisManager->configure({ primaryAxis });
 
-    // m_axisController starts on the DC axis, so the stepper starts silenced.
-    // Without this the selector's "nothing changed" path would leave a
-    // freshly-built stepper polling axis 1 forever on every DC project — the
-    // one case that never goes through a switch. Safe as a direct call: the
-    // axis thread has not been started yet.
-    m_stepperController->setActive(false);
-    m_axisController = m_gantryController;   // re-pointed once a project loads
+    m_axisLink = m_axisManager->linkFor("gantry");
+    refreshAxisPointers();
+
+    // The concrete controller changes whenever the drive kind does, and
+    // both the gantry service and the playback adapter cache it.
+    connect(m_axisManager, &AxisManager::activeControllerChanged, this,
+            [this](const QString& axisId, AxisControllerBase*) {
+                if (axisId == "gantry") refreshAxisPointers();
+            });
 
     m_gantryService = new GantryService(this);
     m_gantryService->initialize(m_axisController);
@@ -1101,37 +1102,38 @@ bool MainWindow::activeAxisIsStepper() const
            == AxisDriveKind::StepDirClosedLoop;
 }
 
-void MainWindow::selectAxisControllerForDriveKind()
+void MainWindow::refreshAxisPointers()
 {
-    AxisControllerBase* wanted = activeAxisIsStepper()
-        ? static_cast<AxisControllerBase*>(m_stepperController)
-        : static_cast<AxisControllerBase*>(m_gantryController);
-    if (!wanted || wanted == m_axisController) return;
+    if (!m_axisManager) return;
+    m_axisController    = m_axisManager->primary();
+    m_gantryController  = qobject_cast<GantryAxisController*>(m_axisController);
+    m_stepperController = qobject_cast<StepperAxisController*>(m_axisController);
 
-    AxisControllerBase* previous = m_axisController;
-    m_axisController = wanted;
-
-    // Silence the axis we are no longer driving, and wake the one we are.
-    // Queued, because both live on the axis thread.
-    if (previous && previous != wanted) {
-        QMetaObject::invokeMethod(previous, [previous]() {
-            previous->stopJog();
-            previous->setActive(false);
-        }, Qt::QueuedConnection);
-    }
-    QMetaObject::invokeMethod(wanted, [wanted]() { wanted->setActive(true); },
-                              Qt::QueuedConnection);
-
+    // Both of these cache the pointer, and a stale cache is exactly how
+    // setpoints end up at the axis nobody is driving.
     if (m_gantryService)   m_gantryService->initialize(m_axisController);
     if (m_playbackService) {
         m_playbackService->setAdditionalServices(m_gantryService, m_fizService,
                                                  m_axisController, m_nucleusService);
     }
+}
 
-    StructuredLogger::instance().log(StructuredLogger::Category::Motion, "MainWindow",
-        QString("External axis is now driven as %1.")
-            .arg(activeAxisIsStepper() ? "a step/dir stepper (axis 1)"
-                                       : "a DC servo (axis 0)"));
+void MainWindow::selectAxisControllerForDriveKind()
+{
+    if (!m_axisManager || !m_projectService) return;
+
+    // The manager owns the switching, the wake/sleep pair and the logging,
+    // and announces activeControllerChanged only when the concrete class
+    // really changes - which is what re-points our cached pointers.
+    QList<AxisConfig> axes = m_projectService->project().axes;
+    if (axes.isEmpty()) {
+        AxisConfig primary;
+        primary.motorSpec = m_projectService->project().gantryMotorSpec;
+        primary.tuning    = m_projectService->project().gantryTuning;
+        axes.append(primary);
+    }
+    m_axisManager->configure(axes);
+    refreshAxisPointers();
 }
 
 void MainWindow::onGantryTuning()
@@ -1184,27 +1186,11 @@ void MainWindow::pushGantryTuning()
 {
     if (!m_projectService) return;
 
-    // The drive kind may have just changed in the setup dialog, so re-select
-    // before pushing — otherwise the settings land on the axis we are no
-    // longer driving.
+    // configure() re-selects each axis's drive kind AND pushes its settings
+    // to whichever controller ends up driving it, so this is one call now.
+    // Doing it in that order matters: pushing first would land the settings
+    // on the axis we are about to stop driving.
     selectAxisControllerForDriveKind();
-    if (!m_axisController) return;
-
-    // Copy by value — the lambda runs later, on the controller's own thread.
-    const GantryTuning tuning = m_projectService->project().gantryTuning;
-    const GantryMotorSpec spec = m_projectService->project().gantryMotorSpec;
-    AxisControllerBase* axis = m_axisController;
-    auto* stepper = (axis == m_stepperController) ? m_stepperController : nullptr;
-
-    QMetaObject::invokeMethod(axis, [axis, stepper, tuning, spec]() {
-        if (stepper) {
-            stepper->setStepRateLimits(
-                static_cast<long>(spec.stepRateCeilingHz),
-                static_cast<long>(tuning.stepAccelStepsPerSec2));
-            stepper->setIdleDisable(tuning.idleDisable);
-        }
-        axis->applyTuning(tuning);
-    }, Qt::QueuedConnection);
 }
 
 void MainWindow::onDiagnostics()

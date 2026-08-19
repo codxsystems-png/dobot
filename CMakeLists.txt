@@ -139,6 +139,7 @@ set(GANTRY_SOURCES
     src/infrastructure/gantry/axis_controller_base.cpp
     src/infrastructure/gantry/gantryaxiscontroller.cpp
     src/infrastructure/gantry/stepper_axis_controller.cpp
+    src/infrastructure/gantry/axis_manager.cpp
     src/infrastructure/gantry/axis_board_link.cpp
     src/infrastructure/gantry/serial_transport.cpp
     src/infrastructure/gantry/qt_serial_transport.cpp

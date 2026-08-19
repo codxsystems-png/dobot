@@ -219,3 +219,18 @@ target_sources(test_project_migration PRIVATE
     ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
     ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
 )
+
+# Test: Axis Manager (lookup, link sharing, drive-kind switching)
+add_cambot_test(test_axis_manager test_axis_manager.cpp)
+target_sources(test_axis_manager PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/stepper_axis_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/qt_serial_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
+)
