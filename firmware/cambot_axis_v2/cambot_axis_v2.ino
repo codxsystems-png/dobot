@@ -428,8 +428,7 @@ void serviceStepper()
   stepRate = next;
 
   const float mag = fabs(stepRate);
-  if (mag < STEP_RATE_MIN) {
-    stepRate = 0.0f;
+  if (mag <= 0.0f) {
     noInterrupts();
     TIMSK1 &= ~_BV(OCIE1A);
     isrRemaining  = 0;
@@ -439,6 +438,24 @@ void serviceStepper()
     stepDecelToStop = false;
     return;
   }
+
+  // Timer1 cannot express anything slower than STEP_RATE_MIN (a
+  // 16-bit compare register at 2MHz), so a slower ramp value gets
+  // CLOCKED at the floor — it must not be clamped back to zero.
+  //
+  // Zeroing it deadlocks the axis: the ramp's first increment is
+  // amax*dt, which for FOLLOWER_PERIOD_US=2000 is amax/500, so any
+  // amax below ~16000 steps/s^2 produces a first step under the
+  // floor. The rate would climb to that value, get zeroed, climb
+  // again, and the axis would sit still forever while reporting
+  // itself healthy and not moving.
+  //
+  // stepRate itself keeps the true ramp value, so acceleration
+  // continues normally underneath; only what Timer1 is programmed
+  // with is raised. The cost is that motion begins at 32 steps/s
+  // rather than creeping in from zero, which at 1600 p/r is 0.02
+  // rev/s — below anything the rig can resolve.
+  const float clocked = (mag < STEP_RATE_MIN) ? STEP_RATE_MIN : mag;
 
   const bool positive = stepRate > 0.0f;
   if ((positive && isrDelta < 0) || (!positive && isrDelta > 0)) {
@@ -458,7 +475,7 @@ void serviceStepper()
   }
   interrupts();
 
-  stepApplyRate(mag);
+  stepApplyRate(clocked);
 }
 
 // ─── Alarm ────────────────────────────────────────────────────
