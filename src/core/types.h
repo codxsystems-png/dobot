@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QImage>
 #include <QList>
+#include <QMap>
 #include <cstdint>
 
 // ─── Robot Joint Angles ────────────────────────────────────────────────────────
@@ -240,6 +241,27 @@ struct TimelineSegment {
 };
 
 // ─── Project ──────────────────────────────────────────────────────────────────
+/// One external axis, everything needed to configure and drive it.
+///
+/// driveKind and axisType are deliberately NOT repeated here — they live in
+/// motorSpec, and duplicating them would create two answers to "what kind of
+/// axis is this" that could disagree after a partial edit.
+struct AxisConfig {
+    /// Stable key, used in the timeline's track map and in saved files. The
+    /// first axis is "gantry" forever: it is what every pre-existing project
+    /// and every not-yet-migrated consumer refers to.
+    QString id = "gantry";
+    QString displayName = "Gantry";
+
+    GantryMotorSpec motorSpec;
+    GantryTuning    tuning;
+
+    /// Serial port, and which axis address this is on that board. Several
+    /// axes can share a port and are distinguished by the index.
+    QString portName;
+    int     firmwareAxisIndex = 0;
+};
+
 struct Project {
     QString                   name;
     QString                   version = "1.2.0";
@@ -265,4 +287,14 @@ struct Project {
     double                    gantryEncoderCountsPerMm = 100.0;
     GantryMotorSpec           gantryMotorSpec;
     GantryTuning              gantryTuning;
+
+    // ─── Multi-axis (schema 2) ────────────────────────────────────────────
+    // The singular gantry* members above remain the source of truth for the
+    // FIRST axis and are mirrored to and from axes[0] on every load and save.
+    // That is what lets consumers migrate one at a time instead of in a
+    // single sweep, and what lets an older build still open a new file.
+    QList<AxisConfig> axes;
+    /// Keyframes per axis id. gantryKeyframes above stays the store for the
+    /// "gantry" axis; this holds any additional ones.
+    QMap<QString, QList<GantryKeyframe>> axisKeyframes;
 };

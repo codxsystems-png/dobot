@@ -40,6 +40,15 @@ public slots:
     /// calibration, travel limits, PWM ramp, PID gains).
     void setGantryTuning(const GantryTuning& tuning);
 
+    /// Replace the axis list. The first entry is mirrored onto the legacy
+    /// gantry* members on save and load, so callers must keep it as the
+    /// primary axis rather than reordering freely.
+    void setAxes(const QList<AxisConfig>& axes);
+
+    /// Keyframes for an axis other than the primary. The primary's live in
+    /// Project::gantryKeyframes, which every existing consumer already reads.
+    void setAxisKeyframes(const QString& axisId, const QList<GantryKeyframe>& kfs);
+
     /// Save to current path (or prompt if new)
     bool saveProject();
 
@@ -60,6 +69,7 @@ signals:
     void errorOccurred(const QString& error);
     void gantryMotorSpecChanged(const GantryMotorSpec& spec);
     void gantryTuningChanged(const GantryTuning& tuning);
+    void axesChanged(const QList<AxisConfig>& axes);
 
 private:
     QJsonObject projectToJson() const;

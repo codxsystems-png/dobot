@@ -14,6 +14,80 @@
 #include <QBuffer>
 #include <QDebug>
 
+namespace {
+
+/// Serialises one axis. Same shape as the legacy flat keys, just nested, so
+/// the two representations can be compared by eye when something looks wrong.
+QJsonObject axisToJson(const AxisConfig& a)
+{
+    QJsonObject o;
+    o["id"]                = a.id;
+    o["displayName"]       = a.displayName;
+    o["portName"]          = a.portName;
+    o["firmwareAxisIndex"] = a.firmwareAxisIndex;
+
+    QJsonObject spec;
+    spec["motorRpm"]          = a.motorSpec.motorRpm;
+    spec["gearRatio"]         = a.motorSpec.gearRatio;
+    spec["mmPerRev"]          = a.motorSpec.mmPerRev;
+    spec["maxAccelMmPerSec2"] = a.motorSpec.maxAccelMmPerSec2;
+    spec["configured"]        = a.motorSpec.configured;
+    spec["axisType"]          = static_cast<int>(a.motorSpec.axisType);
+    spec["driveKind"]         = static_cast<int>(a.motorSpec.driveKind);
+    spec["pulsesPerRev"]      = a.motorSpec.pulsesPerRev;
+    spec["stepRateCeilingHz"] = a.motorSpec.stepRateCeilingHz;
+    o["motorSpec"] = spec;
+
+    QJsonObject t;
+    t["countsPerUnit"]         = a.tuning.countsPerUnit;
+    t["travelMin"]             = a.tuning.travelLimits.minMm;
+    t["travelMax"]             = a.tuning.travelLimits.maxMm;
+    t["pwmRampPerTick"]        = a.tuning.pwmRampPerTick;
+    t["pidKp"]                 = a.tuning.pidKp;
+    t["pidKi"]                 = a.tuning.pidKi;
+    t["pidKd"]                 = a.tuning.pidKd;
+    t["configured"]            = a.tuning.configured;
+    t["stepAccelStepsPerSec2"] = a.tuning.stepAccelStepsPerSec2;
+    t["idleDisable"]           = a.tuning.idleDisable;
+    o["tuning"] = t;
+    return o;
+}
+
+AxisConfig axisFromJson(const QJsonObject& o)
+{
+    AxisConfig a;
+    a.id                = o["id"].toString("gantry");
+    a.displayName       = o["displayName"].toString("Gantry");
+    a.portName          = o["portName"].toString();
+    a.firmwareAxisIndex = o["firmwareAxisIndex"].toInt(0);
+
+    const QJsonObject spec = o["motorSpec"].toObject();
+    a.motorSpec.motorRpm          = spec["motorRpm"].toDouble(3000.0);
+    a.motorSpec.gearRatio         = spec["gearRatio"].toDouble(1.0);
+    a.motorSpec.mmPerRev          = spec["mmPerRev"].toDouble(4.0);
+    a.motorSpec.maxAccelMmPerSec2 = spec["maxAccelMmPerSec2"].toDouble(400.0);
+    a.motorSpec.configured        = spec["configured"].toBool(false);
+    a.motorSpec.axisType          = static_cast<GantryAxisType>(spec["axisType"].toInt(0));
+    a.motorSpec.driveKind         = static_cast<AxisDriveKind>(spec["driveKind"].toInt(0));
+    a.motorSpec.pulsesPerRev      = spec["pulsesPerRev"].toDouble(1600.0);
+    a.motorSpec.stepRateCeilingHz = spec["stepRateCeilingHz"].toDouble(3500.0);
+
+    const QJsonObject t = o["tuning"].toObject();
+    a.tuning.countsPerUnit         = t["countsPerUnit"].toDouble(100.0);
+    a.tuning.travelLimits.minMm    = t["travelMin"].toDouble(0.0);
+    a.tuning.travelLimits.maxMm    = t["travelMax"].toDouble(1000.0);
+    a.tuning.pwmRampPerTick        = t["pwmRampPerTick"].toInt(15);
+    a.tuning.pidKp                 = t["pidKp"].toDouble(0.8);
+    a.tuning.pidKi                 = t["pidKi"].toDouble(0.1);
+    a.tuning.pidKd                 = t["pidKd"].toDouble(0.05);
+    a.tuning.configured            = t["configured"].toBool(false);
+    a.tuning.stepAccelStepsPerSec2 = t["stepAccelStepsPerSec2"].toDouble(40000.0);
+    a.tuning.idleDisable           = t["idleDisable"].toBool(false);
+    return a;
+}
+
+} // namespace
+
 ProjectService::ProjectService(PointsModel* pointsModel, QObject* parent)
     : QObject(parent)
     , m_pointsModel(pointsModel)
@@ -51,6 +125,31 @@ void ProjectService::newProject()
 
     emit projectNew();
     emit dirtyChanged(false);
+}
+
+void ProjectService::setAxes(const QList<AxisConfig>& axes)
+{
+    m_project.axes = axes;
+    // Keep the legacy members in step immediately, not only at save time —
+    // consumers read them between now and the next write.
+    if (!m_project.axes.isEmpty()) {
+        const AxisConfig& primary = m_project.axes.first();
+        m_project.gantryMotorSpec = primary.motorSpec;
+        m_project.gantryTuning    = primary.tuning;
+        m_project.gantryEncoderCountsPerMm = primary.tuning.countsPerUnit;
+    }
+    setDirty(true);
+    emit axesChanged(m_project.axes);
+}
+
+void ProjectService::setAxisKeyframes(const QString& axisId, const QList<GantryKeyframe>& kfs)
+{
+    if (axisId == "gantry") {
+        m_project.gantryKeyframes = kfs;
+    } else {
+        m_project.axisKeyframes.insert(axisId, kfs);
+    }
+    setDirty(true);
 }
 
 bool ProjectService::saveProject()
@@ -260,6 +359,43 @@ QJsonObject ProjectService::projectToJson() const
     tuning["stepAccelStepsPerSec2"] = m_project.gantryTuning.stepAccelStepsPerSec2;
     tuning["idleDisable"]           = m_project.gantryTuning.idleDisable;
     obj["gantryTuning"] = tuning;
+
+    // ─── Multi-axis (schema 2) ────────────────────────────────────────────
+    // Written IN ADDITION TO every legacy key above, never instead of them.
+    // An older build opening this file still finds the flat gantry keys and
+    // behaves exactly as it always did; a newer build prefers "axes".
+    obj["schemaVersion"] = 2;
+
+    QJsonArray axesArray;
+    if (m_project.axes.isEmpty()) {
+        // Nothing has populated the list yet — synthesise the first axis from
+        // the live singular members so a file saved now already carries the
+        // new shape rather than waiting for an unrelated edit.
+        AxisConfig primary;
+        primary.motorSpec = m_project.gantryMotorSpec;
+        primary.tuning    = m_project.gantryTuning;
+        axesArray.append(axisToJson(primary));
+    } else {
+        for (const auto& a : m_project.axes) axesArray.append(axisToJson(a));
+    }
+    obj["axes"] = axesArray;
+
+    QJsonObject extraKfs;
+    for (auto it = m_project.axisKeyframes.constBegin();
+         it != m_project.axisKeyframes.constEnd(); ++it) {
+        if (it.key() == "gantry") continue;   // that one lives in gantryKeyframes
+        QJsonArray arr;
+        for (const auto& kf : it.value()) {
+            QJsonObject k;
+            k["id"]         = kf.id;
+            k["time"]       = kf.time;
+            k["positionMm"] = kf.positionMm;
+            k["easing"]     = static_cast<int>(kf.easing);
+            arr.append(k);
+        }
+        extraKfs[it.key()] = arr;
+    }
+    obj["axisKeyframes"] = extraKfs;
     QJsonArray gantryArray;
     for (const auto& kf : m_project.gantryKeyframes) {
         QJsonObject kfObj;
@@ -387,6 +523,53 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
         m_project.gantryTuning = GantryTuning();
         m_project.gantryTuning.countsPerUnit = legacyCounts;
     }
+    // ─── Multi-axis (schema 2) ────────────────────────────────────────────
+    // The flat gantry keys have already been read above, so the singular
+    // members hold the v1 answer. If this file also carries "axes", that is
+    // authoritative and the singular members are re-mirrored FROM it; if it
+    // does not, we synthesise the list FROM them. Either way both
+    // representations agree when this returns, which is what lets consumers
+    // migrate one at a time.
+    m_project.axes.clear();
+    m_project.axisKeyframes.clear();
+
+    if (obj.contains("axes") && obj["axes"].isArray() && !obj["axes"].toArray().isEmpty()) {
+        for (const auto& v : obj["axes"].toArray()) {
+            m_project.axes.append(axisFromJson(v.toObject()));
+        }
+        // Mirror the primary axis back onto the legacy members. Every
+        // not-yet-migrated consumer still reads those, so skipping this would
+        // silently revert the first axis to defaults on any schema-2 file.
+        const AxisConfig& primary = m_project.axes.first();
+        m_project.gantryMotorSpec = primary.motorSpec;
+        m_project.gantryTuning    = primary.tuning;
+        m_project.gantryEncoderCountsPerMm = primary.tuning.countsPerUnit;
+    } else {
+        // Pre-schema-2 file. Synthesise exactly one axis from what the flat
+        // keys gave us, so it loads bit-identically to how it always did.
+        AxisConfig primary;
+        primary.motorSpec = m_project.gantryMotorSpec;
+        primary.tuning    = m_project.gantryTuning;
+        m_project.axes.append(primary);
+    }
+
+    if (obj.contains("axisKeyframes")) {
+        const QJsonObject extra = obj["axisKeyframes"].toObject();
+        for (auto it = extra.constBegin(); it != extra.constEnd(); ++it) {
+            QList<GantryKeyframe> kfs;
+            for (const auto& v : it.value().toArray()) {
+                const QJsonObject k = v.toObject();
+                GantryKeyframe kf;
+                kf.id         = k["id"].toString();
+                kf.time       = k["time"].toDouble();
+                kf.positionMm = k["positionMm"].toDouble();
+                kf.easing     = static_cast<GantryKeyframe::Easing>(k["easing"].toInt());
+                kfs.append(kf);
+            }
+            m_project.axisKeyframes.insert(it.key(), kfs);
+        }
+    }
+
     if (obj.contains("gantryKeyframes")) {
         QJsonArray gantryArray = obj["gantryKeyframes"].toArray();
         for (const auto& v : gantryArray) {
