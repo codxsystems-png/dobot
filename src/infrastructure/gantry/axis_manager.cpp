@@ -147,6 +147,18 @@ AxisControllerBase* AxisManager::primary() const
     return controller(m_order.first());
 }
 
+GantryAxisController* AxisManager::dcController(const QString& axisId) const
+{
+    auto it = m_slots.constFind(axisId);
+    return (it == m_slots.constEnd()) ? nullptr : it->dc;
+}
+
+StepperAxisController* AxisManager::stepperController(const QString& axisId) const
+{
+    auto it = m_slots.constFind(axisId);
+    return (it == m_slots.constEnd()) ? nullptr : it->stepper;
+}
+
 AxisBoardLink* AxisManager::linkFor(const QString& axisId) const
 {
     auto it = m_slots.constFind(axisId);

@@ -194,6 +194,51 @@ private slots:
         QCOMPARE(mgr.controller("gantry")->axisIndex(), 0);
         QCOMPARE(mgr.controller("tilt_head")->axisIndex(), 1);
     }
+
+    // ─── Concrete controllers stay reachable ──────────────────────────────
+
+    /// Both concrete controllers must remain reachable whichever one is
+    /// active. Consumers that are drive-kind SPECIFIC rather than "whatever
+    /// is driving" — the PID tuning dialog, and the connect button before it
+    /// was fixed — otherwise get nullptr and silently stop working.
+    ///
+    /// This is a real regression: deriving the DC pointer by casting the
+    /// active controller nulled it whenever a stepper was selected, and
+    /// switching drive kind stopped the board connecting at all.
+    void testBothConcreteControllersSurviveASwitch()
+    {
+        AxisManager mgr(nullptr);
+        mgr.configure({ makeAxis("gantry", AxisDriveKind::DcServoPwm) });
+
+        GantryAxisController*  dc   = mgr.dcController("gantry");
+        StepperAxisController* step = mgr.stepperController("gantry");
+        QVERIFY(dc   != nullptr);
+        QVERIFY(step != nullptr);
+        QCOMPARE(mgr.controller("gantry"), static_cast<AxisControllerBase*>(dc));
+
+        mgr.configure({ makeAxis("gantry", AxisDriveKind::StepDirClosedLoop) });
+
+        // The ACTIVE one changed...
+        QCOMPARE(mgr.controller("gantry"), static_cast<AxisControllerBase*>(step));
+        // ...but both are still there, and are the SAME objects as before.
+        QCOMPARE(mgr.dcController("gantry"), dc);
+        QCOMPARE(mgr.stepperController("gantry"), step);
+    }
+
+    /// Connecting is a board-level action, so every controller on a shared
+    /// link must reach the same one. That is what lets the connect button be
+    /// routed through the active axis regardless of drive kind.
+    void testBothControllersShareTheAxisLink()
+    {
+        AxisManager mgr(nullptr);
+        mgr.configure({ makeAxis("gantry", AxisDriveKind::DcServoPwm) });
+
+        AxisBoardLink* link = mgr.linkFor("gantry");
+        QVERIFY(link != nullptr);
+
+        mgr.configure({ makeAxis("gantry", AxisDriveKind::StepDirClosedLoop) });
+        QCOMPARE(mgr.linkFor("gantry"), link);   // switching must not drop it
+    }
 };
 
 QTEST_MAIN(TestAxisManager)

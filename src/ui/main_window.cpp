@@ -797,14 +797,17 @@ void MainWindow::createConnections()
     // Connect/Disconnect from TeachPanel UI
     connect(m_teachPanel, &TeachPanel::gantryConnectRequested,
             this, [this](const QString& port) {
-                QMetaObject::invokeMethod(m_gantryController, [this, port]() {
-                    m_gantryController->connectPort(port);
+                // Connecting is a BOARD-level action: any controller on the
+                // link opens the same port. Routed through the active axis so
+                // it works whichever drive kind is selected.
+                QMetaObject::invokeMethod(m_axisController, [this, port]() {
+                    m_axisController->connectPort(port);
                 }, Qt::QueuedConnection);
             });
     connect(m_teachPanel, &TeachPanel::gantryDisconnectRequested,
             this, [this]() {
-                QMetaObject::invokeMethod(m_gantryController, [this]() {
-                    m_gantryController->disconnectPort();
+                QMetaObject::invokeMethod(m_axisController, [this]() {
+                    m_axisController->disconnectPort();
                 }, Qt::QueuedConnection);
             });
 
@@ -1019,10 +1022,14 @@ void MainWindow::onEmergencyStop()
     // PlaybackEngine::stop() returns early when playback is already stopped,
     // and a PID tuning run REQUIRES playback stopped — so E-STOP would
     // otherwise leave a step test driving the axis.
-    if (m_gantryController) {
-        QMetaObject::invokeMethod(m_gantryController, [this]() {
-            m_gantryController->abortTuning("emergency stop");
-            m_gantryController->stopJog();
+    // E-STOP must reach whatever is actually driving, not only the DC
+    // controller — a stepper would otherwise keep running.
+    if (m_axisController) {
+        AxisControllerBase* axis = m_axisController;
+        auto* dc = m_gantryController;
+        QMetaObject::invokeMethod(axis, [axis, dc]() {
+            if (dc) dc->abortTuning("emergency stop");
+            axis->stopJog();
         }, Qt::QueuedConnection);
     }
 
@@ -1106,8 +1113,13 @@ void MainWindow::refreshAxisPointers()
 {
     if (!m_axisManager) return;
     m_axisController    = m_axisManager->primary();
-    m_gantryController  = qobject_cast<GantryAxisController*>(m_axisController);
-    m_stepperController = qobject_cast<StepperAxisController*>(m_axisController);
+    // These two are the CONCRETE controllers, not casts of the active one.
+    // Casting nulls whichever kind is not currently selected, and everything
+    // holding it — the connect button, the tuning dialog, E-STOP — then
+    // silently does nothing. That is how switching to a stepper stopped the
+    // board connecting at all.
+    m_gantryController  = m_axisManager->dcController("gantry");
+    m_stepperController = m_axisManager->stepperController("gantry");
 
     // Both of these cache the pointer, and a stale cache is exactly how
     // setpoints end up at the axis nobody is driving.

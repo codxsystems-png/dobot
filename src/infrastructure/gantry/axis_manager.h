@@ -58,6 +58,16 @@ public:
     /// move over one call site at a time instead of in one sweep.
     AxisControllerBase* primary() const;
 
+    /// The concrete controllers for an axis, REGARDLESS of which is active.
+    ///
+    /// Needed because some consumers are drive-kind specific rather than
+    /// "whatever is driving": the PID tuning dialog only ever means the DC
+    /// controller, and it must stay reachable while a stepper is selected —
+    /// casting the active controller instead yields nullptr and whatever
+    /// used it silently stops working.
+    GantryAxisController*  dcController(const QString& axisId) const;
+    StepperAxisController* stepperController(const QString& axisId) const;
+
     /// The board link serving `axisId`, for connect/disconnect at the BOARD
     /// level. Several axes can share one, so connecting is a property of the
     /// board rather than of any single axis.
