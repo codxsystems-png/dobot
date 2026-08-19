@@ -25,7 +25,7 @@
  *   Axis 1 — CL57C closed-loop stepper
  *     STEP   = pin 9  (PB1, Timer1 CTC — see below)
  *     DIR    = pin 7  (PD7)
- *     ENABLE = pin 6  (PD6)
+ *     ENABLE = pin 6  (PD6) — NOT WIRED, see STEP_HAS_ENABLE
  *     ALM in = A0     (input_pullup, polled)
  *     Home   = A1     (optional; absent by default, see NO_HOME)
  *
@@ -112,8 +112,25 @@ const int MAX_PWM = 255;
 // homing and the travel limits.
 const bool STEP_ACTIVE_LOW   = true;
 const bool DIR_INVERT        = false;
-const bool ENABLE_ACTIVE_LOW = true;
 const bool ALARM_ACTIVE_LOW  = true;
+
+// ─── ENA is NOT wired on this rig, deliberately ───────────────
+// This CL57C treats its ENA input as DISABLE: energising the opto
+// switches the drive off. Driving the pin therefore killed the
+// motor in whichever polarity meant "enabled", and the axis had
+// no holding torque and ignored every step pulse — with a green,
+// unalarmed LED the whole time, because from the drive's point of
+// view it was doing exactly what it was told.
+//
+// With ENA left open the drive is energised whenever it is
+// powered, which is what this rig wants. So the pin is not driven
+// at all: it stays a high-impedance input, and the firmware
+// reports the axis as permanently enabled, because it is.
+//
+// Set this true only for a drive whose ENA genuinely enables, and
+// re-verify by hand — the shaft must resist with ENA asserted.
+const bool STEP_HAS_ENABLE   = false;
+const bool ENABLE_ACTIVE_LOW = false;
 
 // No home switch is fitted on the stepper axis in this rig — the
 // host uses "Set Zero Here" instead. The H command still answers
@@ -305,6 +322,14 @@ void stepSetDirection(bool positive)
 
 void stepSetEnable(bool on)
 {
+  if (!STEP_HAS_ENABLE) {
+    // No ENA connection: the drive is live whenever it is powered.
+    // Report that honestly rather than tracking a state the
+    // hardware does not have — the follower gates on stepEnabled,
+    // so claiming "disabled" here would silently refuse all motion.
+    stepEnabled = true;
+    return;
+  }
   stepEnabled = on;
   digitalWrite(PIN_STEP_ENABLE, (ENABLE_ACTIVE_LOW ? !on : on) ? HIGH : LOW);
 }
@@ -823,6 +848,37 @@ void handleCommand(char* line)
       break;
     }
 
+    case 'W': {
+      // Commissioning pin exercise. Normal STEP pulses are 3us wide -
+      // 0.1% duty at any usable rate - so a multimeter reads them as a
+      // steady idle level and cannot tell a working STEP line from a
+      // dead one. This drives the pin at 1Hz, 50% duty, for 10s, which
+      // a meter shows as roughly half rail and an LED shows as a blink.
+      //
+      // 0 = STEP (pin 9), 1 = DIR (pin 7), 2 = ENABLE (pin 6).
+      const long which = axis;
+      uint8_t pin = PIN_STEP;
+      if      (which == 1) pin = PIN_STEP_DIR;
+      else if (which == 2) pin = PIN_STEP_ENABLE;
+
+      // The step ISR also drives PORTB, so silence it for the duration.
+      noInterrupts();
+      TIMSK1 &= ~_BV(OCIE1A);
+      interrupts();
+
+      Serial.print(F("# W exercising pin ")); Serial.print(pin);
+      Serial.println(F(" at 1Hz for 10s"));
+      for (uint8_t i = 0; i < 10; i++) {
+        digitalWrite(pin, HIGH); delay(500);
+        digitalWrite(pin, LOW);  delay(500);
+      }
+      // Park STEP back in its inactive level.
+      if (STEP_ACTIVE_LOW) STEP_PORT |=  STEP_BIT;
+      else                 STEP_PORT &= ~STEP_BIT;
+      Serial.println(F("# W done"));
+      break;
+    }
+
     default:
       // Unknown type. Say so rather than failing silently — a
       // mismatched host is the likely cause and should be loud.
@@ -843,7 +899,9 @@ void setup()
 
   pinMode(PIN_STEP,        OUTPUT);
   pinMode(PIN_STEP_DIR,    OUTPUT);
-  pinMode(PIN_STEP_ENABLE, OUTPUT);
+  // Left as a high-impedance input unless ENA is genuinely wired —
+  // see STEP_HAS_ENABLE. Driving it is what disabled the drive.
+  if (STEP_HAS_ENABLE) pinMode(PIN_STEP_ENABLE, OUTPUT);
   pinMode(PIN_STEP_ALM,    INPUT_PULLUP);
   pinMode(PIN_STEP_HOME,   INPUT_PULLUP);
 
@@ -868,7 +926,7 @@ void setup()
   interrupts();
 
   stepSetDirection(true);
-  stepSetEnable(false);        // no torque until the host asks
+  stepSetEnable(false);        // a no-op unless ENA is actually wired
 
   setDcPwm(0);
   dcLastSetpointMs   = millis();
