@@ -136,6 +136,7 @@ leads with a type character so the host parses by content, never by
 | `H <ax>` | query home switch (1 = pressed) |
 | `S <ax>` | query status word |
 | `R <ax>` | clear a latched Halted state |
+| `D <ax>` | commissioning diagnostic — raw pin levels, as a `#` comment |
 | `P` | ping |
 | `X` | global stop (does **not** latch Halted, does **not** drop ENABLE) |
 
@@ -216,6 +217,21 @@ refused while ALM is still asserted.
 
 **Wire it.** Without it the rig will happily keep shooting against a step count
 that no longer describes where the camera is.
+
+## Diagnosing a dead axis
+
+`D 0` reports the raw input levels rather than the firmware's interpretation of
+them, which splits a dead axis into two very different problems:
+
+- **A pin never changes state while you turn the shaft** — the signal is not
+  reaching the board. Encoder wiring, a disconnected plug, or missing encoder
+  supply. Both encoder pins reading `1` forever is the classic signature: that
+  is `INPUT_PULLUP` with nothing driving the pin.
+- **The pin toggles but `cnt=` does not move** — the signal is arriving and the
+  firmware is mishandling it. That one is a real firmware bug.
+
+Without this split it is very easy to spend an afternoon rewriting a working
+ISR because an encoder plug was loose.
 
 ## Known behaviour worth being aware of
 

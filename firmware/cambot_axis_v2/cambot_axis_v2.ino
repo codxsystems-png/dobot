@@ -802,6 +802,27 @@ void handleCommand(char* line)
       break;
     }
 
+    case 'D': {
+      // Commissioning diagnostic: raw input levels, so a dead axis
+      // can be split into "the pin never moves" (wiring, power) and
+      // "the pin moves but the count does not" (this firmware).
+      // Emitted as a '#' comment, which the host already discards,
+      // so it costs the protocol nothing to leave in.
+      noInterrupts();
+      long c = encoderCount;
+      long sp = stepPos;
+      interrupts();
+      Serial.print(F("# D encA="));  Serial.print(digitalRead(PIN_ENCODER_A));
+      Serial.print(F(" encB="));     Serial.print(digitalRead(PIN_ENCODER_B));
+      Serial.print(F(" pind="));     Serial.print(PIND, BIN);
+      Serial.print(F(" cnt="));      Serial.print(c);
+      Serial.print(F(" eimsk="));    Serial.print(EIMSK, BIN);
+      Serial.print(F(" dcHome="));   Serial.print(digitalRead(PIN_DC_HOME));
+      Serial.print(F(" alm="));      Serial.print(digitalRead(PIN_STEP_ALM));
+      Serial.print(F(" steps="));    Serial.println(sp);
+      break;
+    }
+
     default:
       // Unknown type. Say so rather than failing silently — a
       // mismatched host is the likely cause and should be loud.
