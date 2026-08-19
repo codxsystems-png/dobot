@@ -133,8 +133,20 @@ void StepperAxisController::tick(double targetUnits)
     if (m_state == State::Jogging) return;  // the operator has the axis
 
     const double clamped = clampToTravel(targetUnits);
+    const long   before   = m_targetSteps;
     m_targetSteps = unitsToSteps(clamped);
+    const bool entering = (m_state != State::Tracking);
     m_state = State::Tracking;
+
+    // Only on entry and on a real change of target — this runs at 50Hz.
+    if (entering || before != m_targetSteps) {
+        if (entering) {
+            StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+                "StepperAxisController",
+                QString("Tracking started: target %1 units -> %2 steps.")
+                    .arg(clamped, 0, 'f', 3).arg(m_targetSteps));
+        }
+    }
 
     // Sent EVERY tick, unchanged or not. This is not redundancy: the board's
     // watchdog watches the setpoint stream specifically, so a repeated target
@@ -159,9 +171,20 @@ void StepperAxisController::jogGantry(int stepsPerSec)
     if (m_halted) clearFault();
     if (!m_enabled) setEnabled(true);
 
+    const long requested = stepsPerSec;
     m_jogRate = static_cast<int>(std::clamp<long>(stepsPerSec, -m_vmax, m_vmax));
     m_state   = State::Jogging;
     if (m_link) m_link->send(axisproto::cmdJog(m_axisIndex, m_jogRate));
+
+    // Logged because "jogging does nothing" has several causes that look
+    // identical from the outside — a rate of zero, a rate clamped away by
+    // vmax, or a command that never left the host at all. The number says
+    // which.
+    StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+        "StepperAxisController",
+        QString("Jog commanded: requested %1, sent %2 steps/s (vmax %3, enabled %4, halted %5)")
+            .arg(requested).arg(m_jogRate).arg(m_vmax)
+            .arg(m_enabled ? "yes" : "no").arg(m_halted ? "yes" : "no"));
 }
 
 void StepperAxisController::stopJog()
@@ -170,6 +193,8 @@ void StepperAxisController::stopJog()
     m_jogRate = 0;
     m_state   = State::Idle;
     if (m_link) m_link->send(axisproto::cmdJog(m_axisIndex, 0));
+    StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+        "StepperAxisController", "Jog stopped.");
 
     // The board decelerates to a standstill and adopts wherever that lands as
     // its target. Follow it, or the next tick would command a jump back to the
