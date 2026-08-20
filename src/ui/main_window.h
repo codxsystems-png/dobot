@@ -50,6 +50,7 @@ class FizPanel;
 class FizTrackWidget;
 class StepperAxisController;
 class AxisControllerBase;
+struct CameraPoint;
 class AxisBoardLink;
 class AxisManager;
 class GantryService;
@@ -183,6 +184,13 @@ private:
     /// Pushes each non-primary axis's stored keyframes back into the track
     /// widget, so what is drawn matches what playback will actually run.
     void refreshTrackWidgetKeyframes();
+    /// Creates one auto keyframe per axis for a segment, from a taught point
+    /// or from where each axis is right now.
+    void syncAxisKeyframesForSegment(const QString& segId, double timeSec,
+                                     const CameraPoint& pt);
+    /// Carries every axis's auto keyframe when its segment is dragged, so the
+    /// curve rows never disagree with the timeline about when the axis is due.
+    void retimeAxisKeyframesForSegment(const QString& segId, double newTime);
     /// Axes whose signals are already connected. Lambdas cannot use
     /// Qt::UniqueConnection, so this is what keeps re-configuration from
     /// duplicating every position update.

@@ -562,15 +562,10 @@ void MainWindow::createConnections()
                     seg.triggerTime = timeSec;
                     m_segmentsModel->addSegment(seg);
 
-                    // Sync Gantry keyframe (id derived from the segment so a
-                    // later drag can carry it — see segmentMoved below)
-                    if (m_gantryService) {
-                        GantryKeyframe gkf;
-                        gkf.id         = seg.id + kAutoKeyframeSuffix;
-                        gkf.time       = timeSec;
-                        gkf.positionMm = pt.id.isEmpty() ? m_gantryService->currentPositionMm() : pt.gantryPositionMm;
-                        m_gantryService->addKeyframe(gkf);
-                    }
+                    // Sync a keyframe on EVERY axis (ids derived from the
+                    // segment so a later drag can carry them — see
+                    // segmentMoved below).
+                    syncAxisKeyframesForSegment(seg.id, timeSec, pt);
 
                     // Sync FIZ keyframe
                     if (m_fizService) {
@@ -651,6 +646,7 @@ void MainWindow::createConnections()
                             }
                         }
                     }
+                    retimeAxisKeyframesForSegment(segId, newTime);
                     if (m_fizService) {
                         for (auto kf : m_fizService->keyframes()) {
                             if (kf.id == autoId) {
@@ -700,13 +696,7 @@ void MainWindow::createConnections()
                     // Sync Gantry/FIZ keyframes on drop. Their ids are derived
                     // from the segment id (not random) so a later segment drag
                     // can find and carry them along — see segmentMoved below.
-                    if (m_gantryService) {
-                        GantryKeyframe gkf;
-                        gkf.id         = segId + kAutoKeyframeSuffix;
-                        gkf.time       = timeSec;
-                        gkf.positionMm = pt.id.isEmpty() ? m_gantryService->currentPositionMm() : pt.gantryPositionMm;
-                        m_gantryService->addKeyframe(gkf);
-                    }
+                    syncAxisKeyframesForSegment(segId, timeSec, pt);
 
                     if (m_fizService) {
                         FizKeyframe fkf;
@@ -1199,6 +1189,68 @@ void MainWindow::refreshAxisPointers()
             m_playbackService->registerAxisAdapter(id, m_axisManager->controller(id));
         }
     }
+}
+
+void MainWindow::syncAxisKeyframesForSegment(const QString& segId, double timeSec,
+                                             const CameraPoint& pt)
+{
+    const QString autoId = segId + kAutoKeyframeSuffix;
+
+    // The primary keeps its GantryService path — every consumer still reading
+    // the legacy members depends on it.
+    if (m_gantryService) {
+        GantryKeyframe gkf;
+        gkf.id         = autoId;
+        gkf.time       = timeSec;
+        gkf.positionMm = pt.id.isEmpty() ? m_gantryService->currentPositionMm()
+                                         : pt.axisPosition(kPrimaryAxis);
+        m_gantryService->addKeyframe(gkf);
+    }
+
+    // Every OTHER axis gets one too. Without this a dropped point produced a
+    // keyframe for the gantry alone, so any second axis had an empty track and
+    // never moved during playback — visible as a timeline row with no diamonds.
+    if (!m_axisManager || !m_projectService) return;
+    for (const QString& id : m_axisManager->axisIds()) {
+        if (id == kPrimaryAxis) continue;
+
+        double units = 0.0;
+        if (pt.id.isEmpty()) {
+            // Dropped without a saved point: use where the axis is right now.
+            if (auto* c = m_axisManager->controller(id)) units = c->currentPositionMm();
+        } else {
+            units = pt.axisPosition(id);
+        }
+
+        GantryKeyframe kf;
+        // Suffixed with the axis id so one segment's keyframes across several
+        // axes stay distinguishable, and a retime can find each of them.
+        kf.id         = autoId + "_" + id;
+        kf.time       = timeSec;
+        kf.positionMm = units;
+
+        auto kfs = m_projectService->project().axisKeyframes.value(id);
+        kfs.append(kf);
+        m_projectService->setAxisKeyframes(id, kfs);
+    }
+    refreshTrackWidgetKeyframes();
+}
+
+void MainWindow::retimeAxisKeyframesForSegment(const QString& segId, double newTime)
+{
+    if (!m_axisManager || !m_projectService) return;
+    const QString autoId = segId + kAutoKeyframeSuffix;
+
+    for (const QString& id : m_axisManager->axisIds()) {
+        if (id == kPrimaryAxis) continue;
+        auto kfs = m_projectService->project().axisKeyframes.value(id);
+        bool touched = false;
+        for (auto& kf : kfs) {
+            if (kf.id == autoId + "_" + id) { kf.time = newTime; touched = true; break; }
+        }
+        if (touched) m_projectService->setAxisKeyframes(id, kfs);
+    }
+    refreshTrackWidgetKeyframes();
 }
 
 void MainWindow::refreshTrackWidgetKeyframes()
