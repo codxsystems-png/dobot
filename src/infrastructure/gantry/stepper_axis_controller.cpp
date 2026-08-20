@@ -233,6 +233,15 @@ void StepperAxisController::heartbeat()
     if (++m_ticksSincePoll >= POLL_EVERY_TICKS) {
         m_ticksSincePoll = 0;
         if (m_link) m_link->send(axisproto::cmdQuery(m_axisIndex));
+
+        // Status far less often than position. Without it the host never
+        // learns the board has latched a halt — and a halted board ignores
+        // every command silently, so the axis simply stops responding with
+        // nothing anywhere saying why.
+        if (++m_pollsSinceStatus >= STATUS_EVERY_POLLS) {
+            m_pollsSinceStatus = 0;
+            if (m_link) m_link->send(axisproto::cmdStatus(m_axisIndex));
+        }
     }
 }
 
@@ -285,7 +294,16 @@ void StepperAxisController::onReply(const axisproto::Reply& reply)
         const auto info = axisproto::parseStatus(reply);
         if (!info) break;
         m_enabled = info->enabled();
-        m_halted  = info->halted();
+        if (info->halted() && !m_halted) {
+            StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+                "StepperAxisController",
+                QString("Axis %1 is HALTED on the board and is ignoring commands. "
+                        "Clearing the fault.").arg(m_axisIndex));
+            // Recover automatically: a latched halt the operator cannot see
+            // is indistinguishable from broken hardware.
+            clearFault();
+        }
+        m_halted = info->halted();
         if (info->alarm() && !m_alarmed) {
             m_alarmed = true;
             m_isHomed = false;
@@ -326,6 +344,14 @@ void StepperAxisController::onReply(const axisproto::Reply& reply)
     default:
         break;
     }
+}
+
+void StepperAxisController::onIdentified()
+{
+    // The board comes up with its own defaults, and a project's limits were
+    // almost certainly applied before the link existed — sendLimits() would
+    // have dropped them. Push them now that there is something to receive.
+    sendLimits();
 }
 
 void StepperAxisController::resetControlState()

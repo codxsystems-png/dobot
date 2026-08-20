@@ -112,6 +112,13 @@ protected:
     /// still reach the board.
     virtual void onLinkLostImpl() {}
 
+    /// Called once the board has identified itself. Anything that must be
+    /// PUSHED to the board belongs here rather than in a setter: settings are
+    /// routinely applied before the link is up (a project loads long before
+    /// the operator connects), and a setter that writes to an unidentified
+    /// link silently drops what it was given.
+    virtual void onIdentified() {}
+
     /// Called by connectPort() before the port is opened. A subclass clears
     /// whatever control state it carries, so a reconnect never resumes a
     /// half-finished move or a stale output from the previous session.

@@ -561,9 +561,15 @@ void handleCommand(char* line)
       jogging[ax]     = (r != 0);
       decelToStop[ax] = false;
       if (!jogging[ax]) {
-        // Leaving jog: adopt where we are, so the follower stops in
-        // place instead of snapping back to the last T.
-        noInterrupts(); stepTarget[ax] = stepPos[ax]; interrupts();
+        // Leaving jog: RAMP DOWN, do not adopt a position.
+        //
+        // Capturing stepPos here looks equivalent but is not: the axis is
+        // still moving, so it coasts past the captured point, `remaining`
+        // goes negative and the follower REVERSES to go back for it. That
+        // is motion with no setpoint stream, so the watchdog trips and
+        // latches Halted — after which every further J is silently
+        // ignored and the axis never jogs again.
+        decelToStop[ax] = true;
       }
       lastSetpointMs[ax] = millis();
       break;

@@ -113,6 +113,7 @@ private:
 
     void onLinkLostImpl() override;
     void resetControlState() override;
+    void onIdentified() override;
 
     long m_targetSteps = 0;
     long m_boardSteps  = 0;
@@ -131,6 +132,8 @@ private:
     // and is polled at a fraction of the tick rate to leave the link quiet.
     int m_ticksSincePoll = 0;
     static constexpr int POLL_EVERY_TICKS = 5;   // 100ms at a 20ms tick
+    int m_pollsSinceStatus = 0;
+    static constexpr int STATUS_EVERY_POLLS = 10;  // ~1s
 
     // Stall detection: consecutive polls where the board neither reached the
     // target nor moved toward it at all.

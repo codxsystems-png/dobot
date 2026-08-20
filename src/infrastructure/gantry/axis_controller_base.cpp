@@ -61,6 +61,7 @@ void AxisControllerBase::wireLink()
     connect(m_link, &AxisBoardLink::identified, this, [this](const axisproto::VersionInfo&) {
         m_isHomed = false;
         resetControlState();
+        onIdentified();
         if (m_active) m_controlTimer->start(20);   // 50Hz
     });
 
@@ -71,8 +72,9 @@ void AxisControllerBase::wireLink()
     // Without this the new axis has no control loop at all: nothing re-sends
     // its jog, so the board's watchdog stops it after 500ms ("moves once, then
     // stops"), and nothing polls its position, so the readout stays blank.
-    if (m_active && m_link->isIdentified()) {
-        m_controlTimer->start(20);
+    if (m_link->isIdentified()) {
+        onIdentified();
+        if (m_active) m_controlTimer->start(20);
     }
 }
 
