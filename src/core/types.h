@@ -162,7 +162,15 @@ struct GantryTuning {
     // The step-rate ceiling lives in GantryMotorSpec, not here — see the note
     // there. These two are board-side clamps and policy, not motion inputs.
     /// Step acceleration clamp, applied on the board.
-    double stepAccelStepsPerSec2  = 40000.0;
+    ///
+    /// Deliberately gentle. 40000 was inherited from the DC era and reaches
+    /// full speed in well under a tenth of a second — on a loaded axis that
+    /// is a slam, and a closed-loop drive answers it by losing position and
+    /// raising its alarm, which reads as "the axis randomly stops".
+    ///
+    /// Raise it only as far as the axis actually follows, checking the SHAFT
+    /// returns to its mark rather than trusting the step count.
+    double stepAccelStepsPerSec2  = 8000.0;
     /// Whether to drop ENABLE when idle. Stays false on anything gravity-
     /// loaded: ENABLE is a torque switch, and releasing it lets the axis fall.
     bool   idleDisable            = false;

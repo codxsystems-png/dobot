@@ -132,6 +132,9 @@ private:
     // and is polled at a fraction of the tick rate to leave the link quiet.
     int m_ticksSincePoll = 0;
     static constexpr int POLL_EVERY_TICKS = 5;   // 100ms at a 20ms tick
+    /// Set while tick() is refusing, so the reason is reported once rather
+    /// than at the streaming rate.
+    bool m_refusalLogged = false;
     int m_pollsSinceStatus = 0;
     static constexpr int STATUS_EVERY_POLLS = 10;  // ~1s
 

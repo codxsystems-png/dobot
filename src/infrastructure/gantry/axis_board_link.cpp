@@ -188,19 +188,39 @@ void AxisBoardLink::onReadyRead()
 
         auto reply = axisproto::parseLine(line);
         if (!reply) {
-            // Comments, blanks and unknown types land here. Never guess at
-            // what an unrecognised line meant — that was exactly the v1 bug.
             QString trimmed = line.trimmed();
+
+            // A line can arrive with garbage in front of it: if the board
+            // resets — or drops bytes — mid-reply, the truncated stub is
+            // still in the buffer when the next line lands, and the two
+            // concatenate ("Q # ... ready", "Q ! 0 1 drive alarm").
+            //
+            // Those are exactly the lines that must NOT be lost: a reset
+            // notice and a drive alarm. So before discarding, look for a
+            // reply marker further in and re-parse from there. Six resets
+            // and three alarms were thrown away this way in one session.
+            const int bang = trimmed.indexOf(QLatin1Char('!'));
+            if (bang > 0) {
+                if (auto recovered = axisproto::parseLine(trimmed.mid(bang))) {
+                    StructuredLogger::instance().log(StructuredLogger::Category::Connection,
+                        "AxisBoardLink",
+                        "Recovered a reply from a corrupted line: " + trimmed);
+                    dispatch(*recovered);
+                    continue;
+                }
+            }
 
             // The board's boot banner arriving mid-session means it RESET
             // without us asking — a brown-out, a loose USB, a supply dip.
             //
-            // That has to be loud. Every step count on the board is now zero
+            // Matched anywhere in the line, not just at the start, for the
+            // same reason: a reset mid-reply leaves a stub in front of it.
+            //
+            // This has to be loud. Every step count on the board is now zero
             // while the host still believes its positions are valid, so an
             // undetected reset means the next move is computed against an
-            // origin that no longer exists. The host is never told otherwise:
-            // there is no reconnection, so nothing re-runs the handshake.
-            if (m_identified && trimmed.contains("ready") && trimmed.startsWith('#')) {
+            // origin that no longer exists.
+            if (m_identified && trimmed.contains(QLatin1String("CamBot axis board"))) {
                 StructuredLogger::instance().log(StructuredLogger::Category::Safety,
                     "AxisBoardLink",
                     "THE AXIS BOARD RESET UNEXPECTEDLY. Every axis position is lost "

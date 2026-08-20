@@ -129,8 +129,27 @@ void StepperAxisController::homeGantry()
 
 void StepperAxisController::tick(double targetUnits)
 {
-    if (!isIdentified() || !m_isHomed) return;
-    if (m_halted || m_alarmed) return;      // latched: the board ignores us anyway
+    // An axis that refuses setpoints mid-take looks exactly like one that
+    // stopped for no reason, so say WHY — once per reason, not at 50Hz.
+    const char* refusal = nullptr;
+    if (!isIdentified())            refusal = "the board is not connected";
+    else if (!m_isHomed)            refusal = "the axis has no zero (re-zero it)";
+    else if (m_alarmed)             refusal = "the drive is in alarm";
+    else if (m_halted)              refusal = "the board has halted this axis";
+
+    if (refusal) {
+        if (!m_refusalLogged) {
+            m_refusalLogged = true;
+            const QString msg = QString("Axis %1 is NOT following the timeline: %2.")
+                                    .arg(m_axisIndex).arg(refusal);
+            StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+                "StepperAxisController", msg);
+            emit errorOccurred(msg);
+        }
+        return;
+    }
+    m_refusalLogged = false;
+
     if (m_state == State::Jogging) return;  // the operator has the axis
 
     const double clamped = clampToTravel(targetUnits);

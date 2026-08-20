@@ -328,6 +328,48 @@ private slots:
         QCOMPARE(resetSpy.count(), 1);
     }
 
+    /// A reset MID-REPLY leaves a truncated stub in the buffer, so the banner
+    /// arrives with garbage in front of it: "Q # CamBot ... ready". Requiring
+    /// the line to start with '#' missed every real reset for exactly this
+    /// reason — six in one session, all silently discarded.
+    void testResetIsDetectedEvenWithAStubInFront()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        QSignalSpy resetSpy(&link, &AxisBoardLink::boardReset);
+
+        link.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kGoodVersion);
+        fake->emitReadyRead();
+
+        fake->pushIncomingLine("Q # CamBot axis board v3 (FW4, 3x STEP) ready");
+        fake->emitReadyRead();
+
+        QCOMPARE(resetSpy.count(), 1);
+    }
+
+    /// The same corruption swallowed real FAULTS. A drive alarm is the only
+    /// integrity signal a stepper axis has, so losing it to a stray prefix is
+    /// the worst possible line to drop.
+    void testFaultIsRecoveredFromACorruptedLine()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        RecordingHandler handler;
+        link.registerAxis(0, &handler);
+
+        link.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kGoodVersion);
+        fake->emitReadyRead();
+        handler.replies.clear();
+
+        fake->pushIncomingLine("Q ! 0 1 drive alarm");
+        fake->emitReadyRead();
+
+        QCOMPARE(handler.replies.size(), 1);
+        QCOMPARE(handler.replies.first().type, '!');
+    }
+
     /// The banner seen BEFORE identification is just the normal boot message
     /// from opening the port, and must not be reported as a fault.
     void testBannerBeforeIdentificationIsNotAReset()
