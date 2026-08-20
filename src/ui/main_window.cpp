@@ -364,6 +364,7 @@ void MainWindow::createCentralLayout()
                 this, [this](const QList<AxisConfig>&) {
                     applyAxisConfiguration();     // build/reconfigure the runtimes
                     refreshTrackWidgetAxes();     // then redraw to match
+                    if (m_teachPanel) refreshAxisUnitLabel(m_teachPanel->selectedAxisId());
                 });
         // Axis type drives the units shown on the jog readout (mm vs degrees).
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
@@ -757,12 +758,12 @@ void MainWindow::createConnections()
             }
         }
     }
-    // Seed the readout's units from the loaded project (the change signal
-    // only fires on edits, and the panel didn't exist when that was wired).
-    if (m_projectService && m_teachPanel) {
-        m_teachPanel->setAxisUnitLabel(
-            motion::unitLabel(m_projectService->project().gantryMotorSpec));
-    }
+    // Units belong to the SELECTED axis, not to the primary. Each axis has
+    // its own linear/rotary setting, so a rotary second axis was reading out
+    // in mm purely because the label was seeded once from axis 0.
+    connect(m_teachPanel, &TeachPanel::axisSelectionChanged,
+            this, [this](const QString& axisId) { refreshAxisUnitLabel(axisId); });
+    if (m_teachPanel) refreshAxisUnitLabel(m_teachPanel->selectedAxisId());
     connect(m_axisController, &StepperAxisController::connected,
             this, [this]() { m_teachPanel->setGantryConnected(true); });
     connect(m_axisController, &StepperAxisController::disconnected,
@@ -1171,6 +1172,20 @@ void MainWindow::refreshAxisPointers()
             m_playbackService->registerAxisAdapter(id, m_axisManager->controller(id));
         }
     }
+}
+
+void MainWindow::refreshAxisUnitLabel(const QString& axisId)
+{
+    if (!m_teachPanel || !m_projectService) return;
+
+    for (const AxisConfig& a : m_projectService->project().axes) {
+        if (a.id != axisId) continue;
+        m_teachPanel->setAxisUnitLabel(motion::unitLabel(a.motorSpec));
+        return;
+    }
+    // Unknown axis (or a project with no list yet): fall back to the primary.
+    m_teachPanel->setAxisUnitLabel(
+        motion::unitLabel(m_projectService->project().gantryMotorSpec));
 }
 
 void MainWindow::applyAxisConfiguration()

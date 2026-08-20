@@ -625,6 +625,59 @@ private slots:
 
         QVERIFY(fake->wasCommandSent("T 1 800"));
     }
+
+    /// An axis created while the board is ALREADY identified must start its
+    /// control loop immediately. The identified signal fires once per
+    /// identification, and the operator adds axes from the setup dialog with
+    /// the link live — so a late axis misses it and never sees it again.
+    ///
+    /// Real symptom: the new axis jogged for half a second and stopped (the
+    /// board's watchdog, because nothing re-sent the jog) and its position
+    /// readout stayed blank (because nothing polled it).
+    void testAxisAddedWhileConnectedStartsItsLoop()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+
+        StepperAxisController first(&link, 0);
+        first.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+        QVERIFY(first.isIdentified());
+
+        // Added AFTER identification, exactly as the setup dialog does.
+        StepperAxisController late(&link, 1);
+        QVERIFY(late.isIdentified());
+
+        fake->clearWrittenCommands();
+        QTest::qWait(250);
+
+        QVERIFY2(!fake->commandsMatching("Q 1").isEmpty(),
+                 "an axis added while connected must poll its own position");
+    }
+
+    /// The mirror: its jog must keep being re-sent, or the board's watchdog
+    /// stops the axis after 500ms and it looks like "moves once, then stops".
+    void testLateAddedAxisKeepsRefreshingItsJog()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+
+        StepperAxisController first(&link, 0);
+        first.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kVersionReply);
+        fake->emitReadyRead();
+
+        StepperAxisController late(&link, 1);
+        late.homeGantry();
+        late.jogGantry(500);
+
+        fake->clearWrittenCommands();
+        QTest::qWait(250);
+
+        QVERIFY2(fake->commandsMatching("J 1 500").count() >= 2,
+                 "the jog must be refreshed by the control loop, not sent once");
+    }
 };
 
 QTEST_MAIN(TestStepperAxisController)

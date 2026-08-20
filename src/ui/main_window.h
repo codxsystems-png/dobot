@@ -172,6 +172,9 @@ private:
     AxisManager* m_axisManager = nullptr;
 
     void applyAxisConfiguration();
+    /// Sets the jog readout units from the SELECTED axis, since linear and
+    /// rotary axes can be mixed on one rig.
+    void refreshAxisUnitLabel(const QString& axisId);
     /// Re-reads the active controller from the manager and re-points
     /// everything that caches it.
     void refreshAxisPointers();

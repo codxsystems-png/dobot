@@ -63,6 +63,17 @@ void AxisControllerBase::wireLink()
         resetControlState();
         if (m_active) m_controlTimer->start(20);   // 50Hz
     });
+
+    // An axis added while the board is ALREADY connected missed that signal
+    // and will never see it again — it fires once per identification, and the
+    // operator adds axes from the setup dialog with the link live.
+    //
+    // Without this the new axis has no control loop at all: nothing re-sends
+    // its jog, so the board's watchdog stops it after 500ms ("moves once, then
+    // stops"), and nothing polls its position, so the readout stays blank.
+    if (m_active && m_link->isIdentified()) {
+        m_controlTimer->start(20);
+    }
 }
 
 QStringList AxisControllerBase::availablePorts() const
