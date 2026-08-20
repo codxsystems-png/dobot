@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include <QMainWindow>
+#include <QSet>
 #include <QSplitter>
 #include <QHBoxLayout>
 #include <QToolBar>
@@ -175,6 +176,14 @@ private:
     /// Sets the jog readout units from the SELECTED axis, since linear and
     /// rotary axes can be mixed on one rig.
     void refreshAxisUnitLabel(const QString& axisId);
+    /// Connects position, error and alarm signals for any axis not yet wired.
+    /// Runs at startup AND after every configuration change, because an axis
+    /// can be added while the app is running.
+    void wireAxisSignals();
+    /// Axes whose signals are already connected. Lambdas cannot use
+    /// Qt::UniqueConnection, so this is what keeps re-configuration from
+    /// duplicating every position update.
+    QSet<QString> m_wiredAxisIds;
     /// Re-reads the active controller from the manager and re-points
     /// everything that caches it.
     void refreshAxisPointers();

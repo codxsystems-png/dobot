@@ -746,18 +746,10 @@ void MainWindow::createConnections()
         if (!axis) return;
         QMetaObject::invokeMethod(axis, [axis]() { axis->homeGantry(); }, Qt::QueuedConnection);
     });
-    // Both controllers report position, but only the active one runs a control
-    // loop (see AxisControllerBase::setActive), so only one is ever talking.
-    // Reported WITH the axis id: several axes poll independently, and the
-    // panel shows only the selected one rather than whichever replied last.
-    if (m_axisManager) {
-        for (const QString& id : m_axisManager->axisIds()) {
-            if (auto* c = m_axisManager->controller(id)) {
-                connect(c, &StepperAxisController::positionChanged, this,
-                        [this, id](double p) { m_teachPanel->updateAxisPosition(id, p); });
-            }
-        }
-    }
+    // Per-axis signals are wired by wireAxisSignals(), which also runs after
+    // every configuration change — an axis added later would otherwise never
+    // be connected to anything, and would report position into the void.
+    wireAxisSignals();
     // Units belong to the SELECTED axis, not to the primary. Each axis has
     // its own linear/rotary setting, so a rotary second axis was reading out
     // in mm purely because the label was seeded once from axis 0.
@@ -771,25 +763,16 @@ void MainWindow::createConnections()
     // Previously unwired: homing timeouts, serial errors, and travel-limit
     // clamps vanished silently. StructuredLogger already persists them at
     // the point of emission; this makes them visible to the operator too.
-    connect(m_axisController, &StepperAxisController::errorOccurred,
-            this, [this](const QString& err) { m_diagnosticsPanel->appendLog(err, "ERROR"); });
-    connect(m_axisController, &StepperAxisController::errorOccurred,
-            this, [this](const QString& err) { m_diagnosticsPanel->appendLog(err, "ERROR"); });
-    // A drive alarm is the stepper's only integrity signal, so it gets said
-    // out loud rather than only appearing in the log.
-    connect(m_axisController, &StepperAxisController::alarmRaised,
-            this, [this](const QString& text) {
-                m_diagnosticsPanel->appendLog(
-                    QString("STEPPER DRIVE ALARM: %1 - position reference lost, "
-                            "re-zero the axis before shooting.").arg(text), "ERROR");
-            });
+    // Errors and alarms are wired per axis in wireAxisSignals(), so every
+    // axis reports its own — not just the primary.
 
     // Record Path (Phase 9): captures continuous hand-jogged gantry motion
     // as an alternative to teaching only discrete fixed points. The sample
     // feed stays connected unconditionally — PathRecorderService::addSample
     // no-ops whenever a recording isn't active.
-    connect(m_axisController, &StepperAxisController::positionChanged,
-            m_pathRecorder, &PathRecorderService::addSample);
+    // Path recording follows the PRIMARY axis only: the recorder stores one
+    // stream of positions, so feeding it several axes would interleave them
+    // into a path that describes none of them.
     connect(m_axisController, &StepperAxisController::positionChanged,
             m_pathRecorder, &PathRecorderService::addSample);
     connect(m_teachPanel, &TeachPanel::gantryRecordToggled, this, [this](bool recording) {
@@ -1174,6 +1157,44 @@ void MainWindow::refreshAxisPointers()
     }
 }
 
+void MainWindow::wireAxisSignals()
+{
+    if (!m_axisManager) return;
+
+    for (const QString& id : m_axisManager->axisIds()) {
+        // Connect each axis exactly once. Lambdas cannot use
+        // Qt::UniqueConnection, so the set is what prevents an axis being
+        // wired again every time the configuration is re-applied — which
+        // would duplicate its position updates and its error messages.
+        if (m_wiredAxisIds.contains(id)) continue;
+        StepperAxisController* c = m_axisManager->controller(id);
+        if (!c) continue;
+
+        // Reported WITH the axis id: several axes poll independently, and the
+        // panel shows the selected one rather than whichever replied last.
+        connect(c, &StepperAxisController::positionChanged, this,
+                [this, id](double p) {
+                    if (m_teachPanel) m_teachPanel->updateAxisPosition(id, p);
+                });
+        connect(c, &StepperAxisController::errorOccurred, this,
+                [this, id](const QString& err) {
+                    if (m_diagnosticsPanel)
+                        m_diagnosticsPanel->appendLog(QString("[%1] %2").arg(id, err), "ERROR");
+                });
+        // A drive alarm is this axis's only integrity signal, so it is said
+        // out loud rather than only appearing in the log.
+        connect(c, &StepperAxisController::alarmRaised, this,
+                [this, id](const QString& text) {
+                    if (m_diagnosticsPanel)
+                        m_diagnosticsPanel->appendLog(
+                            QString("DRIVE ALARM on %1: %2 - position reference lost, "
+                                    "re-zero the axis before shooting.").arg(id, text), "ERROR");
+                });
+
+        m_wiredAxisIds.insert(id);
+    }
+}
+
 void MainWindow::refreshAxisUnitLabel(const QString& axisId)
 {
     if (!m_teachPanel || !m_projectService) return;
@@ -1203,6 +1224,7 @@ void MainWindow::applyAxisConfiguration()
         axes.append(primary);
     }
     m_axisManager->configure(axes);
+    wireAxisSignals();          // newly created axes need their signals
     refreshAxisPointers();
 }
 
