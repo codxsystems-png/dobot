@@ -191,6 +191,23 @@ void AxisBoardLink::onReadyRead()
             // Comments, blanks and unknown types land here. Never guess at
             // what an unrecognised line meant — that was exactly the v1 bug.
             QString trimmed = line.trimmed();
+
+            // The board's boot banner arriving mid-session means it RESET
+            // without us asking — a brown-out, a loose USB, a supply dip.
+            //
+            // That has to be loud. Every step count on the board is now zero
+            // while the host still believes its positions are valid, so an
+            // undetected reset means the next move is computed against an
+            // origin that no longer exists. The host is never told otherwise:
+            // there is no reconnection, so nothing re-runs the handshake.
+            if (m_identified && trimmed.contains("ready") && trimmed.startsWith('#')) {
+                StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+                    "AxisBoardLink",
+                    "THE AXIS BOARD RESET UNEXPECTEDLY. Every axis position is lost "
+                    "and must be re-zeroed. This is usually a power problem — a "
+                    "supply dip from the motors, or a marginal USB connection.");
+                emit boardReset();
+            }
             if (!trimmed.isEmpty() && !trimmed.startsWith('#')) {
                 StructuredLogger::instance().log(StructuredLogger::Category::Connection,
                     "AxisBoardLink", "Discarded unrecognised line: " + trimmed);

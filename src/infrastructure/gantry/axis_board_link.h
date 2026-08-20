@@ -76,6 +76,10 @@ signals:
     void connected(const QString& portName);
     void disconnected();
     /// Handshake completed and the protocol matched — the board is usable.
+    /// The board rebooted without being asked. Every axis on it has lost its
+    /// position; consumers must drop any origin they were relying on.
+    void boardReset();
+
     void identified(const axisproto::VersionInfo& info);
     /// Handshake failed: timed out, or the board speaks a different protocol.
     void identificationFailed(const QString& reason);

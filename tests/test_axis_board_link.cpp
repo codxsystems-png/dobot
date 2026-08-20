@@ -306,6 +306,42 @@ private slots:
         link.send(axisproto::cmdTarget(0, 100));
         QCOMPARE(fake->writtenCommands().size(), 0);
     }
+
+    /// The boot banner arriving mid-session means the board reset without
+    /// being asked. It must be reported: every step count on the board is now
+    /// zero while the host still believes its positions are valid, and there
+    /// is no reconnection to re-run the handshake and reveal it.
+    void testUnexpectedBoardResetIsDetected()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        QSignalSpy resetSpy(&link, &AxisBoardLink::boardReset);
+
+        link.connectPort("COM_FAKE");
+        fake->pushIncomingLine(kGoodVersion);
+        fake->emitReadyRead();
+        QVERIFY(link.isIdentified());
+
+        fake->pushIncomingLine("# CamBot axis board v3 (FW4, 3x STEP) ready");
+        fake->emitReadyRead();
+
+        QCOMPARE(resetSpy.count(), 1);
+    }
+
+    /// The banner seen BEFORE identification is just the normal boot message
+    /// from opening the port, and must not be reported as a fault.
+    void testBannerBeforeIdentificationIsNotAReset()
+    {
+        auto* fake = new FakeSerialTransport();
+        AxisBoardLink link(fake);
+        QSignalSpy resetSpy(&link, &AxisBoardLink::boardReset);
+
+        link.connectPort("COM_FAKE");
+        fake->pushIncomingLine("# CamBot axis board v3 (FW4, 3x STEP) ready");
+        fake->emitReadyRead();
+
+        QCOMPARE(resetSpy.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestAxisBoardLink)

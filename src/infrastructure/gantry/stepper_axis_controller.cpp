@@ -308,6 +308,26 @@ void StepperAxisController::onReply(const axisproto::Reply& reply)
             m_alarmed = true;
             m_isHomed = false;
             emit alarmRaised("drive alarm (reported by status)");
+        } else if (!info->alarm() && m_alarmed) {
+            // The alarm has cleared at the drive, so the host must clear it
+            // too. Without this one transient alarm latches FOREVER: jog is
+            // refused outright while alarmed and tick() is blocked by the
+            // homed flag, so a momentary supply dip disabled the axis until
+            // the app was restarted.
+            //
+            // The origin stays lost — the drive faulted, so the step count no
+            // longer describes the shaft and the axis must be re-zeroed. That
+            // is a deliberate, visible consequence; silently disabling the
+            // axis was not.
+            m_alarmed = false;
+            StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+                "StepperAxisController",
+                QString("Axis %1: drive alarm cleared. The axis is usable again, "
+                        "but its zero was lost when the drive faulted — re-zero "
+                        "before relying on a taught position.").arg(m_axisIndex));
+            emit errorOccurred(
+                QString("Axis %1 drive alarm cleared — re-zero this axis before playback.")
+                    .arg(m_axisIndex));
         }
         break;
     }

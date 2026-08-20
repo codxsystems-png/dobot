@@ -65,6 +65,18 @@ void AxisControllerBase::wireLink()
         if (m_active) m_controlTimer->start(20);   // 50Hz
     });
 
+    // A reset wipes the board's step counts, so any origin this controller
+    // held is meaningless. Clearing homed is what stops playback and the
+    // travel clamp trusting a number that no longer describes the axis.
+    connect(m_link, &AxisBoardLink::boardReset, this, [this]() {
+        m_isHomed = false;
+        resetControlState();
+        onIdentified();          // the board came up on ITS defaults; re-push ours
+        emit errorOccurred(
+            QStringLiteral("The axis board reset — this axis has lost its zero and "
+                           "must be re-zeroed before playback."));
+    });
+
     // An axis added while the board is ALREADY connected missed that signal
     // and will never see it again — it fires once per identification, and the
     // operator adds axes from the setup dialog with the link live.

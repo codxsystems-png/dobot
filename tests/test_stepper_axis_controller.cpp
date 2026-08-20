@@ -678,6 +678,40 @@ private slots:
         QVERIFY2(fake->commandsMatching("J 1 500").count() >= 2,
                  "the jog must be refreshed by the control loop, not sent once");
     }
+
+    /// An alarm that clears at the drive must clear on the host too. Without
+    /// a path back, one transient alarm latched forever: jog is refused while
+    /// alarmed and tick() is blocked by the homed flag, so a momentary supply
+    /// dip disabled the axis until the app was restarted.
+    void testDriveAlarmClearsWhenTheBoardSaysItHas()
+    {
+        auto* fake = new FakeSerialTransport();
+        StepperAxisController axis(fake);
+        bringUpAndZero(axis, fake);
+
+        reply(fake, "S 1 9 0 0");            // 0x09 = enabled | alarm
+        QVERIFY(axis.isAlarmed());
+
+        reply(fake, "S 1 1 0 0");            // alarm gone
+        QVERIFY2(!axis.isAlarmed(),
+                 "the host must follow the board out of the alarm, not only into it");
+    }
+
+    /// Clearing the alarm must NOT silently restore the origin: the drive
+    /// faulted, so the step count no longer describes the shaft.
+    void testClearedAlarmStillRequiresReZeroing()
+    {
+        auto* fake = new FakeSerialTransport();
+        StepperAxisController axis(fake);
+        bringUpAndZero(axis, fake);
+
+        reply(fake, "S 1 9 0 0");
+        reply(fake, "S 1 1 0 0");
+
+        QVERIFY(!axis.isAlarmed());
+        QVERIFY2(!axis.isHomed(),
+                 "a faulted drive loses its reference; the operator must re-zero");
+    }
 };
 
 QTEST_MAIN(TestStepperAxisController)
