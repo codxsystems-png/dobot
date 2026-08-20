@@ -59,6 +59,11 @@ static const QString kAutoKeyframeSuffix = "_auto";
 
 // ─── Constructor ────────────────────────────────────────────────────────────────
 
+// The first axis. Its keyframes and taught positions live in the legacy
+// members that most consumers still read, so it takes a different path
+// from every other axis until those consumers are migrated.
+static const QString kPrimaryAxis = QStringLiteral("gantry");
+
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
@@ -157,7 +162,10 @@ void MainWindow::initServices()
 
     m_pathRecorder = new PathRecorderService(this);
 
+    // Taught points must record every axis, so the teach service needs to
+    // see them all rather than only the primary.
     m_teachService   = new TeachService(m_connectionService, nullptr, nullptr, m_fizService, m_gantryService, this);
+    m_teachService->setAxisManager(m_axisManager);
 
     // Phase 5 — PlaybackService (needs conn + segment/point models — wired after UI built)
     m_playbackService = new PlaybackService(m_connectionService, nullptr, nullptr, this);
@@ -364,6 +372,7 @@ void MainWindow::createCentralLayout()
                 this, [this](const QList<AxisConfig>&) {
                     applyAxisConfiguration();     // build/reconfigure the runtimes
                     refreshTrackWidgetAxes();     // then redraw to match
+                    refreshTrackWidgetKeyframes();
                     if (m_teachPanel) refreshAxisUnitLabel(m_teachPanel->selectedAxisId());
                 });
         // Axis type drives the units shown on the jog readout (mm vs degrees).
@@ -928,6 +937,41 @@ void MainWindow::createConnections()
     connect(m_fizTrackWidget, &FizTrackWidget::gantryKeyframeDeleteRequested,
             this, [this](const QString& id) { m_gantryService->removeKeyframe(id); });
 
+    // ── Axes beyond the primary ───────────────────────────────────────────
+    // The primary's keyframes live in GantryService (above). Every other
+    // axis stores its own in the project, which is where TimelineCompiler
+    // reads them from — without these three the track widget held the
+    // keyframes and nothing else ever saw them, so the axis had an empty
+    // track at Play time and simply never moved.
+    connect(m_fizTrackWidget, &FizTrackWidget::addAxisKeyframeRequested,
+            this, [this](const QString& axisId, double time, float value) {
+                if (axisId == kPrimaryAxis) return;      // handled above
+                GantryKeyframe kf;
+                kf.id         = QUuid::createUuid().toString();
+                kf.time       = time;
+                kf.positionMm = value;
+                auto kfs = m_projectService->project().axisKeyframes.value(axisId);
+                kfs.append(kf);
+                m_projectService->setAxisKeyframes(axisId, kfs);
+                refreshTrackWidgetKeyframes();
+            });
+    connect(m_fizTrackWidget, &FizTrackWidget::axisKeyframeMoved,
+            this, [this](const QString& axisId, const GantryKeyframe& kf) {
+                if (axisId == kPrimaryAxis) return;
+                auto kfs = m_projectService->project().axisKeyframes.value(axisId);
+                for (auto& e : kfs) if (e.id == kf.id) e = kf;
+                m_projectService->setAxisKeyframes(axisId, kfs);
+                refreshTrackWidgetKeyframes();
+            });
+    connect(m_fizTrackWidget, &FizTrackWidget::axisKeyframeDeleteRequested,
+            this, [this](const QString& axisId, const QString& id) {
+                if (axisId == kPrimaryAxis) return;
+                auto kfs = m_projectService->project().axisKeyframes.value(axisId);
+                for (int i = kfs.size() - 1; i >= 0; --i) if (kfs[i].id == id) kfs.removeAt(i);
+                m_projectService->setAxisKeyframes(axisId, kfs);
+                refreshTrackWidgetKeyframes();
+            });
+
     // Playback → Track Widget playhead sync
     connect(m_playbackService, &PlaybackService::playheadTimeUpdated, this, [this](double timeSec) {
         if (m_fizTrackWidget) m_fizTrackWidget->setPlayheadTime(timeSec);
@@ -1154,6 +1198,16 @@ void MainWindow::refreshAxisPointers()
             if (id == "gantry") continue;
             m_playbackService->registerAxisAdapter(id, m_axisManager->controller(id));
         }
+    }
+}
+
+void MainWindow::refreshTrackWidgetKeyframes()
+{
+    if (!m_fizTrackWidget || !m_projectService) return;
+    const auto& stored = m_projectService->project().axisKeyframes;
+    for (auto it = stored.constBegin(); it != stored.constEnd(); ++it) {
+        if (it.key() == kPrimaryAxis) continue;   // GantryService owns that one
+        m_fizTrackWidget->setAxisKeyframes(it.key(), it.value());
     }
 }
 

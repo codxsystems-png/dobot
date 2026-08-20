@@ -324,6 +324,51 @@ private slots:
         QCOMPARE(pt.gantryPositionMm, 123.75);
         QCOMPARE(pt.axisPosition("gantry"), 123.75);
     }
+
+    // ─── Multi-axis capture ───────────────────────────────────────────────
+
+    /// A taught point must carry EVERY axis it was taught with. One that
+    /// records only the primary leaves the others with no entry, and
+    /// axisPosition() then answers 0 for them — which on a travel-limited
+    /// axis means playback slams it to one end of its travel.
+    void testPointCarriesEveryAxisItWasTaughtWith()
+    {
+        CameraPoint pt;
+        pt.setAxisPosition("gantry", 120.0);
+        pt.setAxisPosition("axis1",   45.5);
+
+        QCOMPARE(pt.axisPosition("gantry"), 120.0);
+        QCOMPARE(pt.axisPosition("axis1"),  45.5);
+        QCOMPARE(pt.gantryPositionMm, 120.0);      // frozen field still mirrored
+    }
+
+    /// Keyframes for a non-primary axis must survive a save/load, because
+    /// that store is exactly what TimelineCompiler reads to build the axis's
+    /// track. If they are lost the axis compiles to an empty track and simply
+    /// never moves during playback — with no error anywhere.
+    void testNonPrimaryAxisKeyframesReachTheProject()
+    {
+        QTemporaryDir dir;
+        ProjectService a(nullptr);
+        QVERIFY(a.loadProject(writeTemp(dir, "v1.crp", kV1Project)));
+
+        GantryKeyframe k1; k1.id = "t1"; k1.time = 1.0; k1.positionMm = 30.0;
+        GantryKeyframe k2; k2.id = "t2"; k2.time = 4.0; k2.positionMm = 90.0;
+        a.setAxisKeyframes("axis1", { k1, k2 });
+
+        const QString out = dir.filePath("multi.crp");
+        QVERIFY(a.saveProjectAs(out));
+
+        ProjectService b(nullptr);
+        QVERIFY(b.loadProject(out));
+        const auto kfs = b.project().axisKeyframes.value("axis1");
+
+        QCOMPARE(kfs.size(), 2);
+        QCOMPARE(kfs.at(0).positionMm, 30.0);
+        QCOMPARE(kfs.at(1).time, 4.0);
+        // And the primary's own keyframes are untouched by that.
+        QCOMPARE(b.project().gantryKeyframes.size(), 2);
+    }
 };
 
 QTEST_MAIN(TestProjectMigration)

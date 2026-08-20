@@ -180,6 +180,9 @@ private:
     /// Runs at startup AND after every configuration change, because an axis
     /// can be added while the app is running.
     void wireAxisSignals();
+    /// Pushes each non-primary axis's stored keyframes back into the track
+    /// widget, so what is drawn matches what playback will actually run.
+    void refreshTrackWidgetKeyframes();
     /// Axes whose signals are already connected. Lambdas cannot use
     /// Qt::UniqueConnection, so this is what keeps re-configuration from
     /// duplicating every position update.

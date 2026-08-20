@@ -13,11 +13,17 @@ class CameraPreviewWidget;
 class PointsModel;
 class FizService;
 class GantryService;
+class AxisManager;
 
 class TeachService : public QObject
 {
     Q_OBJECT
 public:
+    /// Lets a taught point record EVERY axis, not only the primary. Optional:
+    /// without it points still capture the primary, which is what a
+    /// single-axis rig needs.
+    void setAxisManager(AxisManager* mgr) { m_axisManager = mgr; }
+
     explicit TeachService(ConnectionService* connService,
                           CameraPreviewWidget* camera,
                           PointsModel* model,
@@ -51,5 +57,8 @@ private:
     PointsModel*          m_model       = nullptr;
     FizService*           m_fizService  = nullptr;
     GantryService*        m_gantryService = nullptr;
+    /// Optional. Present, a taught point records every axis; absent, only the
+    /// primary — which is all a single-axis rig has.
+    AxisManager*          m_axisManager = nullptr;
     int                   m_pointCounter = 0;
 };

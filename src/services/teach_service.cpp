@@ -3,6 +3,8 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include "services/teach_service.h"
+#include "infrastructure/gantry/axis_manager.h"
+#include "infrastructure/gantry/stepper_axis_controller.h"
 #include "services/connection_service.h"
 #include "ui/camera_preview_widget.h"
 #include "models/points_model.h"
@@ -65,6 +67,18 @@ void TeachService::recordPoint(const QString& name)
         // setAxisPosition writes the frozen field too, so nothing that reads
         // only gantryPositionMm goes stale.
         pt.setAxisPosition("gantry", m_gantryService->currentPositionMm());
+
+        // Every other axis too. A point that records only the primary leaves
+        // the rest with no position at all, and playback then drives them to
+        // zero — which on a travel-limited axis means slamming to one end.
+        if (m_axisManager) {
+            for (const QString& id : m_axisManager->axisIds()) {
+                if (id == "gantry") continue;
+                if (auto* c = m_axisManager->controller(id)) {
+                    pt.setAxisPosition(id, c->currentPositionMm());
+                }
+            }
+        }
     }
 
     // Add to model
