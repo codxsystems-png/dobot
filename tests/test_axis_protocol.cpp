@@ -19,7 +19,7 @@ private slots:
         // The transport writes these verbatim; a missing terminator would
         // leave the firmware's line parser waiting forever.
         for (const QByteArray& c : { cmdVersion(), cmdEnumerate(), cmdPing(),
-                                      cmdStopAll(), cmdPwm(0, 100),
+                                      cmdStopAll(),
                                       cmdTarget(1, 5000), cmdQuery(0) }) {
             QVERIFY2(c.endsWith('\n'), qPrintable("not terminated: " + c));
         }
@@ -31,7 +31,6 @@ private slots:
         QCOMPARE(cmdEnumerate(),          QByteArray("A\n"));
         QCOMPARE(cmdPing(),               QByteArray("P\n"));
         QCOMPARE(cmdStopAll(),            QByteArray("X\n"));
-        QCOMPARE(cmdPwm(0, -128),         QByteArray("G 0 -128\n"));
         QCOMPARE(cmdTarget(1, 123456),    QByteArray("T 1 123456\n"));
         QCOMPARE(cmdTarget(1, -500),      QByteArray("T 1 -500\n"));
         QCOMPARE(cmdJog(1, -800),         QByteArray("J 1 -800\n"));
@@ -134,24 +133,23 @@ private slots:
 
     void testParseVersionReply()
     {
-        auto r = parseLine("V FW=2 PROTO=2 BOARD=UNO AXES=2 CAPS=DC,STEP");
+        auto r = parseLine("V FW=4 PROTO=3 BOARD=UNO AXES=3 CAPS=STEP");
         QVERIFY(r.has_value());
 
         auto v = parseVersion(*r);
         QVERIFY(v.has_value());
-        QCOMPARE(v->firmware, 2);
-        QCOMPARE(v->protocol, 2);
+        QCOMPARE(v->firmware, 4);
+        QCOMPARE(v->protocol, 3);
         QCOMPARE(v->board, QStringLiteral("UNO"));
-        QCOMPARE(v->axisCount, 2);
-        QCOMPARE(v->caps.size(), 2);
-        QVERIFY(v->caps.contains("DC"));
+        QCOMPARE(v->axisCount, 3);
+        QCOMPARE(v->caps.size(), 1);
         QVERIFY(v->caps.contains("STEP"));
         QVERIFY(isCompatible(*v));
     }
 
     void testVersionFieldOrderDoesNotMatter()
     {
-        auto r = parseLine("V BOARD=MEGA CAPS=DC,STEP,STEP PROTO=2 AXES=3 FW=7");
+        auto r = parseLine("V BOARD=MEGA CAPS=STEP,STEP,STEP PROTO=3 AXES=3 FW=7");
         QVERIFY(r.has_value());
         auto v = parseVersion(*r);
         QVERIFY(v.has_value());
@@ -167,14 +165,14 @@ private slots:
         QVERIFY(r1.has_value());
         QVERIFY(!parseVersion(*r1).has_value());
 
-        auto r2 = parseLine("V FW=2 BOARD=UNO");
+        auto r2 = parseLine("V FW=4 BOARD=UNO");
         QVERIFY(r2.has_value());
         QVERIFY(!parseVersion(*r2).has_value());
     }
 
     void testProtocolMismatchIsDetected()
     {
-        auto r = parseLine("V FW=9 PROTO=3 BOARD=UNO AXES=4 CAPS=DC");
+        auto r = parseLine("V FW=9 PROTO=4 BOARD=UNO AXES=4 CAPS=STEP");
         QVERIFY(r.has_value());
         auto v = parseVersion(*r);
         QVERIFY(v.has_value());

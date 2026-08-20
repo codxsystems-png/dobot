@@ -27,7 +27,7 @@ namespace axisproto {
 /// Protocol major version this build speaks. A mismatch against the board's
 /// reported PROTO is refused outright rather than tolerated — the operator
 /// flashes firmware by hand, so drift is likely and silence would be worse.
-constexpr int kProtocolVersion = 2;
+constexpr int kProtocolVersion = 3;
 
 // ─── Replies ──────────────────────────────────────────────────────────────
 
@@ -104,7 +104,6 @@ QByteArray cmdEnumerate();                                  // A
 QByteArray cmdPing();                                       // P
 QByteArray cmdStopAll();                                    // X
 
-QByteArray cmdPwm(int axis, int pwm);                       // G <ax> <pwm>   DC drive
 QByteArray cmdTarget(int axis, long steps);                 // T <ax> <steps> stepper target
 QByteArray cmdJog(int axis, long stepsPerSec);              // J <ax> <rate>
 QByteArray cmdLimits(int axis, long vmax, long amax);       // L <ax> <vmax> <amax>

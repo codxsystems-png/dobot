@@ -165,7 +165,7 @@ void AxisBoardLink::onHandshakeTick()
         QString reason =
             QString("Board did not identify itself within %1s. Either it is running "
                     "the old v1 firmware, the baud rate is wrong, or this is the "
-                    "wrong port. Flash firmware/cambot_axis_v2.")
+                    "wrong port. Flash firmware/cambot_axis_v3.")
                 .arg(HANDSHAKE_MAX_ATTEMPTS * HANDSHAKE_INTERVAL_MS / 1000);
         StructuredLogger::instance().log(StructuredLogger::Category::Connection,
             "AxisBoardLink", reason);
@@ -216,7 +216,7 @@ void AxisBoardLink::dispatch(const axisproto::Reply& reply)
             m_identified = false;
             QString reason =
                 QString("Axis board speaks protocol v%1 but this build expects v%2. "
-                        "Flash firmware/cambot_axis_v2 (or update the app).")
+                        "Flash firmware/cambot_axis_v3 (or update the app).")
                     .arg(info->protocol).arg(axisproto::kProtocolVersion);
             StructuredLogger::instance().log(StructuredLogger::Category::Connection,
                 "AxisBoardLink", reason);

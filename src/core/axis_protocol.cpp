@@ -135,11 +135,6 @@ QByteArray cmdEnumerate() { return line("A"); }
 QByteArray cmdPing()      { return line("P"); }
 QByteArray cmdStopAll()   { return line("X"); }
 
-QByteArray cmdPwm(int axis, int pwm)
-{
-    return line(QString("G %1 %2").arg(axis).arg(pwm));
-}
-
 QByteArray cmdTarget(int axis, long steps)
 {
     return line(QString("T %1 %2").arg(axis).arg(steps));

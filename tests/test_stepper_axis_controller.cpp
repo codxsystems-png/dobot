@@ -16,7 +16,7 @@
 
 namespace {
 
-const QString kVersionReply = "V FW=3 PROTO=2 BOARD=UNO AXES=2 CAPS=DC,STEP";
+const QString kVersionReply = "V FW=4 PROTO=3 BOARD=UNO AXES=3 CAPS=STEP";
 
 /// Opens the port AND completes the version handshake. connectPort() alone
 /// only opens it — motion is gated on the board identifying itself, because

@@ -26,7 +26,7 @@ public:
     }
 };
 
-const QString kGoodVersion = "V FW=2 PROTO=2 BOARD=UNO AXES=2 CAPS=DC,STEP";
+const QString kGoodVersion = "V FW=4 PROTO=3 BOARD=UNO AXES=3 CAPS=STEP";
 
 /// Opens the link and completes the handshake.
 void bringUp(AxisBoardLink& link, FakeSerialTransport* fake)
@@ -77,9 +77,9 @@ private slots:
 
         QVERIFY(link.isIdentified());
         QCOMPARE(idSpy.count(), 1);
-        QCOMPARE(link.versionInfo().firmware, 2);
+        QCOMPARE(link.versionInfo().firmware, 4);
         QCOMPARE(link.versionInfo().board, QStringLiteral("UNO"));
-        QCOMPARE(link.versionInfo().axisCount, 2);
+        QCOMPARE(link.versionInfo().axisCount, 3);
     }
 
     void testProtocolMismatchIsRefused()
@@ -89,7 +89,7 @@ private slots:
         QSignalSpy failSpy(&link, &AxisBoardLink::identificationFailed);
 
         link.connectPort("COM_FAKE");
-        fake->pushIncomingLine("V FW=9 PROTO=3 BOARD=UNO AXES=4 CAPS=DC");
+        fake->pushIncomingLine("V FW=9 PROTO=4 BOARD=UNO AXES=4 CAPS=STEP");
         fake->emitReadyRead();
 
         QVERIFY2(!link.isIdentified(), "a different protocol major must not be accepted");
@@ -303,7 +303,7 @@ private slots:
         auto* fake = new FakeSerialTransport();
         AxisBoardLink link(fake);
 
-        link.send(axisproto::cmdPwm(0, 100));
+        link.send(axisproto::cmdTarget(0, 100));
         QCOMPARE(fake->writtenCommands().size(), 0);
     }
 };
