@@ -1,9 +1,13 @@
 #pragma once
 // ═══════════════════════════════════════════════════════════════════════════════
-// CamBotTimeline — Gantry / External Axis Setup Dialog
-// Motor spec (RPM, gear ratio, travel per rev), encoder calibration, travel
-// limits and PWM ramp for the external axis. The axis can be a linear gantry
-// (mm) or a bare rotary motor (degrees); every unit label follows that choice.
+// CamBotTimeline — External Axis Setup Dialog
+//
+// Motor spec, step calibration and travel limits for one external axis. Every
+// axis is a step/dir channel into a closed-loop drive, so there are no gains
+// here and no tuning workflow — the drive closes its own loop.
+//
+// An axis can be linear (mm) or rotary (degrees); every unit label follows
+// that choice.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include <QDialog>
@@ -12,7 +16,6 @@
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QPushButton>
-#include <QSpinBox>
 #include <QFormLayout>
 #include <QLabel>
 #include "core/types.h"
@@ -26,26 +29,39 @@ public:
     explicit GantrySetupDialog(ProjectService* projectService, QWidget* parent = nullptr);
 
 private slots:
+    void onAxisSelected(int index);
     void updateDerivedVelocity();
     void updateUnitLabels();
-    void updateRampReadout();
-    /// Shows/hides whole groups so the dialog only ever offers controls that
-    /// mean something for the selected drive kind.
-    void updateForDriveKind();
-    /// Fills the calibration field from pulses/rev, gear ratio and pitch.
     void computeStepsPerUnit();
+    void onAddAxis();
+    void onRemoveAxis();
     void onAccepted();
 
 private:
     void setupUI();
-    /// Builds a spec from the current widget values (for live derivations).
-    GantryMotorSpec specFromWidgets() const;
+    void loadAxisIntoWidgets(const AxisConfig& axis);
+    /// Reads the widgets back into the axis currently selected, so switching
+    /// axes or pressing OK never loses an edit that was only on screen.
+    void storeWidgetsIntoCurrentAxis();
+    AxisConfig axisFromWidgets() const;
+    void refreshAxisCombo();
 
     ProjectService* m_projectService = nullptr;
 
-    // Axis type and drive kind
-    QComboBox*      m_axisTypeCombo  = nullptr;
-    QComboBox*      m_driveKindCombo = nullptr;
+    /// Working copy. Edits land here and are only written back on OK, so
+    /// Cancel genuinely cancels.
+    QList<AxisConfig> m_axes;
+    int               m_currentAxis = 0;
+
+    // Axis selection
+    QComboBox*   m_axisCombo   = nullptr;
+    QPushButton* m_addButton   = nullptr;
+    QPushButton* m_removeButton = nullptr;
+    QLabel*      m_axisCountHint = nullptr;
+
+    // Identity and wiring
+    QComboBox*      m_axisTypeCombo = nullptr;
+    QDoubleSpinBox* m_boardIndexSpin = nullptr;
 
     // Motor spec
     QDoubleSpinBox* m_motorRpmSpin  = nullptr;
@@ -53,32 +69,20 @@ private:
     QDoubleSpinBox* m_mmPerRevSpin  = nullptr;
     QDoubleSpinBox* m_maxAccelSpin  = nullptr;
     QLabel*         m_derivedVelocityLabel = nullptr;
-    QFormLayout*    m_motorForm     = nullptr;   // for hiding the per-rev row in Rotary
+    QFormLayout*    m_motorForm     = nullptr;
 
-    // Stepper-only spec
-    QGroupBox*      m_stepGroup      = nullptr;
+    // Driver
     QDoubleSpinBox* m_pulsesPerRevSpin = nullptr;
     QDoubleSpinBox* m_stepCeilingSpin  = nullptr;
     QDoubleSpinBox* m_stepAccelSpin    = nullptr;
     QCheckBox*      m_idleDisableCheck = nullptr;
-    QLabel*         m_stepHint         = nullptr;
 
     // Calibration
-    QGroupBox*      m_calGroup          = nullptr;
-    QDoubleSpinBox* m_countsPerUnitSpin = nullptr;
-    QLabel*         m_calibrationHint   = nullptr;
+    QDoubleSpinBox* m_countsPerUnitSpin  = nullptr;
+    QLabel*         m_calibrationHint    = nullptr;
     QPushButton*    m_computeStepsButton = nullptr;
 
     // Travel limits
     QDoubleSpinBox* m_travelMinSpin = nullptr;
     QDoubleSpinBox* m_travelMaxSpin = nullptr;
-
-    // Motion tuning (DC only — a stepper has no PWM to ramp)
-    QGroupBox*      m_tuneGroup     = nullptr;
-    QSpinBox*       m_pwmRampSpin   = nullptr;
-    QLabel*         m_rampReadout   = nullptr;
-
-    // PID gains are edited in GantryTuningDialog, not here — carried through
-    // untouched so saving this dialog never clobbers them.
-    double m_pidKp = 0.8, m_pidKi = 0.1, m_pidKd = 0.05;
 };

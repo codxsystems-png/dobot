@@ -26,7 +26,6 @@ double deriveStepsPerUnit(const GantryMotorSpec& spec)
 
 double deriveStepCeilingVelocityUnitsPerSec(const GantryMotorSpec& spec)
 {
-    if (spec.driveKind != AxisDriveKind::StepDirClosedLoop) return 0.0;
     const double stepsPerUnit = deriveStepsPerUnit(spec);
     if (stepsPerUnit <= 0.0 || spec.stepRateCeilingHz <= 0.0) return 0.0;
     return spec.stepRateCeilingHz / stepsPerUnit;
@@ -47,7 +46,6 @@ double deriveMaxGantryVelocityUnitsPerSec(const GantryMotorSpec& spec)
 
 bool stepCeilingIsBinding(const GantryMotorSpec& spec)
 {
-    if (spec.driveKind != AxisDriveKind::StepDirClosedLoop) return false;
     if (spec.gearRatio <= 0.0) return false;
     const double vFromSteps = deriveStepCeilingVelocityUnitsPerSec(spec);
     if (vFromSteps <= 0.0) return false;

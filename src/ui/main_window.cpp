@@ -9,7 +9,6 @@
 #include "ui/camera_preview_widget.h"
 #include "ui/dialogs/calibration_dialog.h"
 #include "ui/dialogs/gantry_setup_dialog.h"
-#include "ui/dialogs/gantry_tuning_dialog.h"
 #include "services/connection_service.h"
 #include "services/project_service.h"
 #include "services/teach_service.h"
@@ -22,7 +21,6 @@
 #include "presentation/widgets/fiztrackwidget.h"
 #include "presentation/dialogs/fizsetupwizard.h"
 #include "presentation/dialogs/lensmappingdialog.h"
-#include "infrastructure/gantry/gantryaxiscontroller.h"
 #include "infrastructure/gantry/stepper_axis_controller.h"
 #include "infrastructure/gantry/axis_board_link.h"
 #include "infrastructure/gantry/axis_manager.h"
@@ -135,7 +133,7 @@ void MainWindow::initServices()
     // the selected one would mean tearing down and rebuilding the serial
     // connection every time that setting changed.
     // AxisManager owns the links, the controllers, and which one drives
-    // each axis. MainWindow keeps m_gantryController and m_axisController
+    // each axis. MainWindow keeps m_axisController and m_axisController
     // as views onto it so the ~117 existing references stay valid; they
     // get retired call site by call site rather than in one sweep.
     m_axisManager = new AxisManager(m_gantryThread, this);
@@ -143,14 +141,15 @@ void MainWindow::initServices()
     AxisConfig primaryAxis;   // defaults = the DC gantry every project has had
     m_axisManager->configure({ primaryAxis });
 
-    m_axisLink = m_axisManager->linkFor("gantry");
     refreshAxisPointers();
 
-    // The concrete controller changes whenever the drive kind does, and
-    // both the gantry service and the playback adapter cache it.
-    connect(m_axisManager, &AxisManager::activeControllerChanged, this,
-            [this](const QString& axisId, AxisControllerBase*) {
-                if (axisId == "gantry") refreshAxisPointers();
+    // An axis the manager refuses — too many, or a duplicate board address —
+    // must be reported, not silently dropped: otherwise the operator has a
+    // configured axis that never moves and no indication why.
+    connect(m_axisManager, &AxisManager::axisRejected, this,
+            [this](const QString& axisId, const QString& reason) {
+                const QString msg = QString("Axis '%1' not started: %2").arg(axisId, reason);
+                if (m_diagnosticsPanel) m_diagnosticsPanel->appendLog(msg, "ERROR");
             });
 
     m_gantryService = new GantryService(this);
@@ -224,7 +223,6 @@ void MainWindow::createMenuBar()
     robotMenu->addSeparator();
     robotMenu->addAction(tr("&Calibration…"), this, &MainWindow::onCalibration);
     robotMenu->addAction(tr("&Gantry Motor Setup…"), this, &MainWindow::onGantryMotorSetup);
-    robotMenu->addAction(tr("Gantry &PID Tuning…"), this, &MainWindow::onGantryTuning);
     robotMenu->addSeparator();
     robotMenu->addAction(tr("&Emergency Stop"), this, &MainWindow::onEmergencyStop, Qt::Key_F12);
 
@@ -750,12 +748,8 @@ void MainWindow::createConnections()
     // panel shows only the selected one rather than whichever replied last.
     if (m_axisManager) {
         for (const QString& id : m_axisManager->axisIds()) {
-            if (auto* dc = m_axisManager->dcController(id)) {
-                connect(dc, &GantryAxisController::positionChanged, this,
-                        [this, id](double p) { m_teachPanel->updateAxisPosition(id, p); });
-            }
-            if (auto* st = m_axisManager->stepperController(id)) {
-                connect(st, &StepperAxisController::positionChanged, this,
+            if (auto* c = m_axisManager->controller(id)) {
+                connect(c, &StepperAxisController::positionChanged, this,
                         [this, id](double p) { m_teachPanel->updateAxisPosition(id, p); });
             }
         }
@@ -766,20 +760,20 @@ void MainWindow::createConnections()
         m_teachPanel->setAxisUnitLabel(
             motion::unitLabel(m_projectService->project().gantryMotorSpec));
     }
-    connect(m_gantryController, &GantryAxisController::connected,
+    connect(m_axisController, &StepperAxisController::connected,
             this, [this]() { m_teachPanel->setGantryConnected(true); });
-    connect(m_gantryController, &GantryAxisController::disconnected,
+    connect(m_axisController, &StepperAxisController::disconnected,
             this, [this]() { m_teachPanel->setGantryConnected(false); });
     // Previously unwired: homing timeouts, serial errors, and travel-limit
     // clamps vanished silently. StructuredLogger already persists them at
     // the point of emission; this makes them visible to the operator too.
-    connect(m_gantryController, &GantryAxisController::errorOccurred,
+    connect(m_axisController, &StepperAxisController::errorOccurred,
             this, [this](const QString& err) { m_diagnosticsPanel->appendLog(err, "ERROR"); });
-    connect(m_stepperController, &StepperAxisController::errorOccurred,
+    connect(m_axisController, &StepperAxisController::errorOccurred,
             this, [this](const QString& err) { m_diagnosticsPanel->appendLog(err, "ERROR"); });
     // A drive alarm is the stepper's only integrity signal, so it gets said
     // out loud rather than only appearing in the log.
-    connect(m_stepperController, &StepperAxisController::alarmRaised,
+    connect(m_axisController, &StepperAxisController::alarmRaised,
             this, [this](const QString& text) {
                 m_diagnosticsPanel->appendLog(
                     QString("STEPPER DRIVE ALARM: %1 - position reference lost, "
@@ -790,9 +784,9 @@ void MainWindow::createConnections()
     // as an alternative to teaching only discrete fixed points. The sample
     // feed stays connected unconditionally — PathRecorderService::addSample
     // no-ops whenever a recording isn't active.
-    connect(m_gantryController, &GantryAxisController::positionChanged,
+    connect(m_axisController, &StepperAxisController::positionChanged,
             m_pathRecorder, &PathRecorderService::addSample);
-    connect(m_stepperController, &StepperAxisController::positionChanged,
+    connect(m_axisController, &StepperAxisController::positionChanged,
             m_pathRecorder, &PathRecorderService::addSample);
     connect(m_teachPanel, &TeachPanel::gantryRecordToggled, this, [this](bool recording) {
         if (recording) {
@@ -1045,16 +1039,14 @@ void MainWindow::onEmergencyStop()
     // The gantry needs stopping explicitly, not just via PlaybackService:
     // PlaybackEngine::stop() returns early when playback is already stopped,
     // and a PID tuning run REQUIRES playback stopped — so E-STOP would
-    // otherwise leave a step test driving the axis.
-    // E-STOP must reach whatever is actually driving, not only the DC
-    // controller — a stepper would otherwise keep running.
-    if (m_axisController) {
-        AxisControllerBase* axis = m_axisController;
-        auto* dc = m_gantryController;
-        QMetaObject::invokeMethod(axis, [axis, dc]() {
-            if (dc) dc->abortTuning("emergency stop");
-            axis->stopJog();
-        }, Qt::QueuedConnection);
+    // Every axis, not just the primary: a stop that leaves one still running
+    // is not a stop.
+    if (m_axisManager) {
+        for (const QString& id : m_axisManager->axisIds()) {
+            if (auto* c = m_axisManager->controller(id)) {
+                QMetaObject::invokeMethod(c, [c]() { c->stopJog(); }, Qt::QueuedConnection);
+            }
+        }
     }
 
     m_statusBarWidget->flashEmergency();
@@ -1126,13 +1118,6 @@ void MainWindow::onGantryMotorSetup()
     dlg.exec();
 }
 
-bool MainWindow::activeAxisIsStepper() const
-{
-    if (!m_projectService) return false;
-    return m_projectService->project().gantryMotorSpec.driveKind
-           == AxisDriveKind::StepDirClosedLoop;
-}
-
 void MainWindow::refreshTrackWidgetAxes()
 {
     if (!m_fizTrackWidget || !m_projectService) return;
@@ -1167,14 +1152,7 @@ void MainWindow::refreshTrackWidgetAxes()
 void MainWindow::refreshAxisPointers()
 {
     if (!m_axisManager) return;
-    m_axisController    = m_axisManager->primary();
-    // These two are the CONCRETE controllers, not casts of the active one.
-    // Casting nulls whichever kind is not currently selected, and everything
-    // holding it — the connect button, the tuning dialog, E-STOP — then
-    // silently does nothing. That is how switching to a stepper stopped the
-    // board connecting at all.
-    m_gantryController  = m_axisManager->dcController("gantry");
-    m_stepperController = m_axisManager->stepperController("gantry");
+    m_axisController = m_axisManager->primary();
 
     // Both of these cache the pointer, and a stale cache is exactly how
     // setpoints end up at the axis nobody is driving.
@@ -1208,26 +1186,6 @@ void MainWindow::selectAxisControllerForDriveKind()
     }
     m_axisManager->configure(axes);
     refreshAxisPointers();
-}
-
-void MainWindow::onGantryTuning()
-{
-    // A stepper closes its own loop — there are no gains to set. The step test
-    // and relay auto-tune are worse than useless here: both command raw PWM,
-    // which on this board goes to the DC axis's H-bridge, so running them
-    // against a stepper would drive the WRONG MOTOR. Refuse outright rather
-    // than opening a dialog full of dead controls.
-    if (activeAxisIsStepper()) {
-        QMessageBox::information(this, tr("PID Tuning"),
-            tr("This axis is a closed-loop stepper, so there is no PID to tune. "
-               "The drive closes its own loop internally. Its settings live in "
-               "Gantry / External Axis Setup: steps per unit, max step rate, "
-               "and step acceleration."));
-        return;
-    }
-
-    GantryTuningDialog dlg(m_projectService, m_gantryController, m_playbackService, this);
-    dlg.exec();
 }
 
 double MainWindow::flooredGantryKeyframeTime(const QString& excludeId,

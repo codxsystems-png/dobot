@@ -144,7 +144,7 @@ double AxisControllerBase::clampToTravel(double targetUnits)
         QString msg = QString("Gantry target %1mm clamped to travel limit %2mm")
                           .arg(targetUnits, 0, 'f', 1).arg(clamped, 0, 'f', 1);
         StructuredLogger::instance().log(StructuredLogger::Category::Safety,
-            "GantryAxisController", msg);
+            "AxisController", msg);
         emit errorOccurred(msg);
     }
     return clamped;

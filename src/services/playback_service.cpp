@@ -17,7 +17,6 @@ static constexpr int TICK_INTERVAL_MS = 50; // 20Hz tick for timeline sync
 #include "models/points_model.h"
 #include "application/gantryservice.h"
 #include "application/fizservice.h"
-#include "infrastructure/gantry/gantryaxiscontroller.h"
 #include "infrastructure/fiz/nucleusservice.h"
 #include "timeline/timeline_compiler.h"
 #include "hardware/dobot_adapter.h"

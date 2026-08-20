@@ -8,7 +8,7 @@
 // thousands of near-identical keyframes.
 //
 // Value-agnostic: feed it whatever continuous single-value position stream
-// is available (today: GantryAxisController::positionChanged, in mm).
+// is available (today: StepperAxisController::positionChanged, in mm).
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include <QObject>

@@ -47,7 +47,6 @@ class NucleusService;
 class FizService;
 class FizPanel;
 class FizTrackWidget;
-class GantryAxisController;
 class StepperAxisController;
 class AxisControllerBase;
 class AxisBoardLink;
@@ -96,7 +95,6 @@ private slots:
 
     void onCalibration();
     void onGantryMotorSetup();
-    void onGantryTuning();
 
 private:
     /// Pushes the project's gantry tuning (encoder calibration, travel limits,
@@ -165,12 +163,9 @@ private:
     // Which one drives the timeline is chosen by the project's drive kind; the
     // other simply sits idle rather than being torn down and rebuilt whenever
     // the setting changes.
-    AxisBoardLink*         m_axisLink          = nullptr;
-    GantryAxisController*  m_gantryController  = nullptr;
-    StepperAxisController* m_stepperController = nullptr;
     /// Whichever of the two the project selects. Everything that does not care
     /// about the drive kind goes through this.
-    AxisControllerBase*    m_axisController    = nullptr;
+    StepperAxisController* m_axisController    = nullptr;
 
     /// Re-points m_axisController at the controller the project's drive kind
     /// selects, and re-wires the playback path to it.
@@ -184,7 +179,6 @@ private:
     /// row's travel range, which is what the row's vertical scale uses.
     void refreshTrackWidgetAxes();
     /// True when the active axis is a stepper, which has no PID to tune.
-    bool activeAxisIsStepper() const;
     GantryService*     m_gantryService     = nullptr;
     PathRecorderService* m_pathRecorder    = nullptr;
 

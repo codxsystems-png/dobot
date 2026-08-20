@@ -15,8 +15,7 @@ namespace motion {
 ///   Linear: maxVelocity = outputRpm * mmPerRev / 60.0   (mm/s)
 ///   Rotary: maxVelocity = outputRpm * 360.0   / 60.0    (deg/s — one output
 ///           revolution is 360 degrees by definition, so mmPerRev is unused)
-/// For a StepDirClosedLoop axis the result is additionally capped by what the
-/// board can actually clock: stepRateCeilingHz / stepsPerUnit. That cap
+/// The result is additionally capped by what the board can actually clock: stepRateCeilingHz / stepsPerUnit. That cap
 /// usually binds first, and ignoring it would advertise a speed the hardware
 /// cannot produce — every segment time derived from it would then be a time
 /// the axis silently fails to meet.
@@ -32,7 +31,7 @@ double deriveMaxGantryVelocityUnitsPerSec(const GantryMotorSpec& spec);
 double deriveStepsPerUnit(const GantryMotorSpec& spec);
 
 /// Velocity the step-rate ceiling alone permits, ignoring motor RPM. 0.0 when
-/// the axis is not a stepper or the spec is invalid.
+/// the spec is invalid.
 double deriveStepCeilingVelocityUnitsPerSec(const GantryMotorSpec& spec);
 
 /// True when the step-rate ceiling is what limits this axis, rather than motor

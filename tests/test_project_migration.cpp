@@ -44,10 +44,6 @@ const char* kV1Project = R"JSON({
     "countsPerUnit": 7.526,
     "travelMin": -15.5,
     "travelMax": 359.5,
-    "pwmRampPerTick": 23,
-    "pidKp": 2.0983,
-    "pidKi": 4.8310,
-    "pidKd": 0.0658,
     "configured": true
   },
   "gantryKeyframes": [
@@ -96,28 +92,11 @@ private slots:
         QCOMPARE(p.gantryTuning.countsPerUnit, 7.526);
         QCOMPARE(p.gantryTuning.travelLimits.minMm, -15.5);
         QCOMPARE(p.gantryTuning.travelLimits.maxMm, 359.5);
-        QCOMPARE(p.gantryTuning.pwmRampPerTick, 23);
-        QCOMPARE(p.gantryTuning.pidKp, 2.0983);
-        QCOMPARE(p.gantryTuning.pidKi, 4.8310);
-        QCOMPARE(p.gantryTuning.pidKd, 0.0658);
         QVERIFY(p.gantryTuning.configured);
 
         QCOMPARE(p.gantryKeyframes.size(), 2);
         QCOMPARE(p.gantryKeyframes.at(0).positionMm, 90.5);
         QCOMPARE(p.gantryKeyframes.at(1).time, 3.75);
-    }
-
-    /// A v1 file predates drive kinds entirely, so it must come back as the
-    /// DC servo it always was. If this ever loaded as a stepper, the tuning
-    /// dialog would refuse to open and playback would stream step targets at
-    /// an H-bridge.
-    void testV1DefaultsToDcServo()
-    {
-        QTemporaryDir dir;
-        ProjectService svc(nullptr);
-        QVERIFY(svc.loadProject(writeTemp(dir, "v1.crp", kV1Project)));
-
-        QCOMPARE(svc.project().gantryMotorSpec.driveKind, AxisDriveKind::DcServoPwm);
     }
 
     /// Loading a v1 file must still produce exactly one axis in the new list,
@@ -157,10 +136,6 @@ private slots:
         const Project& p = b.project();
 
         QCOMPARE(p.gantryTuning.countsPerUnit, 7.526);
-        QCOMPARE(p.gantryTuning.pidKp, 2.0983);
-        QCOMPARE(p.gantryTuning.pidKi, 4.8310);
-        QCOMPARE(p.gantryTuning.pidKd, 0.0658);
-        QCOMPARE(p.gantryTuning.pwmRampPerTick, 23);
         QCOMPARE(p.gantryTuning.travelLimits.minMm, -15.5);
         QCOMPARE(p.gantryTuning.travelLimits.maxMm, 359.5);
         QCOMPARE(p.gantryMotorSpec.motorRpm, 300.0);
@@ -219,7 +194,7 @@ private slots:
             "portName": "COM9",
             "firmwareAxisIndex": 1,
             "motorSpec": { "motorRpm": 600.0, "gearRatio": 3.0, "mmPerRev": 8.0,
-                           "driveKind": 1, "pulsesPerRev": 800.0,
+                           "pulsesPerRev": 800.0,
                            "stepRateCeilingHz": 4200.0, "axisType": 0,
                            "configured": true },
             "tuning": { "countsPerUnit": 55.5, "travelMin": 2.0, "travelMax": 800.0,
@@ -240,7 +215,6 @@ private slots:
         // The axis wins over the stale flat keys, not the other way round.
         QCOMPARE(p.gantryTuning.countsPerUnit, 55.5);
         QCOMPARE(p.gantryMotorSpec.motorRpm, 600.0);
-        QCOMPARE(p.gantryMotorSpec.driveKind, AxisDriveKind::StepDirClosedLoop);
         QCOMPARE(p.gantryMotorSpec.stepRateCeilingHz, 4200.0);
         QCOMPARE(p.gantryTuning.stepAccelStepsPerSec2, 12345.0);
         QVERIFY(p.gantryTuning.idleDisable);

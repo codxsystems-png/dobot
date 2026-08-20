@@ -2,7 +2,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // CamBotTimeline — Fake Serial Transport (Phase 7: test-only)
 // In-memory stand-in for the gantry's Arduino link: the test scripts what
-// GantryAxisController "reads back" and inspects what it wrote, without any
+// the axis controller "reads back" and inspects what it wrote, without any
 // real serial port or hardware.
 // ═══════════════════════════════════════════════════════════════════════════════
 

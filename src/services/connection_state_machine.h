@@ -4,7 +4,7 @@
 // Shared reconnect/backoff policy applied uniformly to every transport
 // (Dobot TCP dashboard, gantry serial, FIZ serial). This class owns no
 // transport itself — the owning class (ConnectionService,
-// GantryAxisController, ...) reports what actually happened via
+// the axis controller, ...) reports what actually happened via
 // notifyConnecting()/notifyConnected()/notifyDisconnected()/notifyFault(),
 // and this class decides when to ask for a reconnect attempt (with
 // exponential backoff) via reconnectRequested().

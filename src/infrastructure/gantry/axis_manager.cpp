@@ -4,11 +4,11 @@
 
 #include "infrastructure/gantry/axis_manager.h"
 #include "infrastructure/gantry/axis_board_link.h"
-#include "infrastructure/gantry/gantryaxiscontroller.h"
 #include "infrastructure/gantry/stepper_axis_controller.h"
 #include "core/structured_logger.h"
 #include <QThread>
 #include <QMetaObject>
+#include <QSet>
 
 AxisManager::AxisManager(QThread* axisThread, QObject* parent)
     : QObject(parent)
@@ -36,83 +36,59 @@ AxisBoardLink* AxisManager::linkForPort(const QString& portName)
 void AxisManager::buildSlot(const AxisConfig& axis)
 {
     Slot slot;
-    slot.config = axis;
-    slot.link   = linkForPort(axis.portName);
-
-    // Both kinds, always. See the header for why building only the selected
-    // one would cost a serial reconnect on every settings change.
-    // Each kind gets its OWN board address. Sharing one index registers both
-    // controllers as the handler for the same axis, and the second silently
-    // takes over the first's replies.
-    slot.dc      = new GantryAxisController(slot.link, axis.firmwareAxisIndex);
-    slot.stepper = new StepperAxisController(slot.link, axis.firmwareStepIndex);
-    if (m_thread) {
-        slot.dc->moveToThread(m_thread);
-        slot.stepper->moveToThread(m_thread);
-    }
-
-    // Both start silenced, then selectForDriveKind wakes exactly one. Doing
-    // it in that order means there is never a window with two controllers
-    // polling the same axis address.
-    slot.dc->setActive(false);
-    slot.stepper->setActive(false);
+    slot.config     = axis;
+    slot.link       = linkForPort(axis.portName);
+    slot.controller = new StepperAxisController(slot.link, axis.firmwareAxisIndex);
+    if (m_thread) slot.controller->moveToThread(m_thread);
 
     m_slots.insert(axis.id, slot);
     m_order.append(axis.id);
-
-    selectForDriveKind(m_slots[axis.id]);
-}
-
-void AxisManager::selectForDriveKind(Slot& slot)
-{
-    const bool stepper = slot.config.motorSpec.driveKind == AxisDriveKind::StepDirClosedLoop;
-    AxisControllerBase* wanted = stepper
-        ? static_cast<AxisControllerBase*>(slot.stepper)
-        : static_cast<AxisControllerBase*>(slot.dc);
-    AxisControllerBase* other  = stepper
-        ? static_cast<AxisControllerBase*>(slot.dc)
-        : static_cast<AxisControllerBase*>(slot.stepper);
-
-    if (slot.active == wanted) return;
-
-    AxisControllerBase* previous = slot.active;
-    slot.active = wanted;
-
-    // Queued: both controllers live on the axis thread. Stop the outgoing one
-    // before waking the incoming one, so a jog in progress cannot outlive the
-    // switch and keep driving an axis nobody is watching.
-    if (previous) {
-        QMetaObject::invokeMethod(previous, [previous]() {
-            previous->stopJog();
-            previous->setActive(false);
-        }, Qt::QueuedConnection);
-    } else {
-        QMetaObject::invokeMethod(other, [other]() { other->setActive(false); },
-                                  Qt::QueuedConnection);
-    }
-    QMetaObject::invokeMethod(wanted, [wanted]() { wanted->setActive(true); },
-                              Qt::QueuedConnection);
-
-    StructuredLogger::instance().log(StructuredLogger::Category::Motion, "AxisManager",
-        QString("Axis '%1' is now driven as %2.")
-            .arg(slot.config.id)
-            .arg(stepper ? "a step/dir stepper" : "a DC servo"));
-
-    emit activeControllerChanged(slot.config.id, wanted);
 }
 
 void AxisManager::configure(const QList<AxisConfig>& axes)
 {
+    // Board addresses must be unique per port. The link routes replies by
+    // index, so two axes sharing one would leave the second silently taking
+    // over the first's position, faults and limit switch — with no error
+    // anywhere. Checked here rather than trusted, because it has happened.
+    QHash<QString, QSet<int>> usedIndices;
+
     for (const AxisConfig& axis : axes) {
-        auto it = m_slots.find(axis.id);
-        if (it == m_slots.end()) {
+        if (axis.id.isEmpty()) continue;
+
+        const bool isNew = !m_slots.contains(axis.id);
+
+        if (isNew && m_order.size() >= kMaxAxes) {
+            const QString why = QString("This board drives at most %1 axes.").arg(kMaxAxes);
+            StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+                "AxisManager", QString("Axis '%1' refused: %2").arg(axis.id, why));
+            emit axisRejected(axis.id, why);
+            continue;
+        }
+
+        QSet<int>& taken = usedIndices[axis.portName];
+        if (taken.contains(axis.firmwareAxisIndex)) {
+            const QString why =
+                QString("Board address %1 is already used by another axis on %2.")
+                    .arg(axis.firmwareAxisIndex)
+                    .arg(axis.portName.isEmpty() ? QStringLiteral("this board") : axis.portName);
+            StructuredLogger::instance().log(StructuredLogger::Category::Safety,
+                "AxisManager", QString("Axis '%1' refused: %2").arg(axis.id, why));
+            emit axisRejected(axis.id, why);
+            continue;
+        }
+        taken.insert(axis.firmwareAxisIndex);
+
+        if (isNew) {
             buildSlot(axis);
+            StructuredLogger::instance().log(StructuredLogger::Category::Motion,
+                "AxisManager",
+                QString("Axis '%1' created at board address %2.")
+                    .arg(axis.id).arg(axis.firmwareAxisIndex));
         } else {
-            // Existing axis: update its configuration and re-select. Rebuilding
-            // would drop a live serial connection every time the operator
-            // touched an unrelated setting.
-            it->config = axis;
-            selectForDriveKind(*it);
+            // Reconfigure in place. Rebuilding would drop a live serial
+            // connection every time the operator touched an unrelated field.
+            m_slots[axis.id].config = axis;
         }
         applyConfig(axis);
     }
@@ -121,45 +97,30 @@ void AxisManager::configure(const QList<AxisConfig>& axes)
 void AxisManager::applyConfig(const AxisConfig& axis)
 {
     auto it = m_slots.constFind(axis.id);
-    if (it == m_slots.constEnd() || !it->active) return;
+    if (it == m_slots.constEnd() || !it->controller) return;
 
-    AxisControllerBase* active = it->active;
-    auto* stepper = (active == it->stepper) ? it->stepper : nullptr;
+    StepperAxisController* c = it->controller;
     const GantryTuning    tuning = axis.tuning;
     const GantryMotorSpec spec   = axis.motorSpec;
 
-    QMetaObject::invokeMethod(active, [active, stepper, tuning, spec]() {
-        if (stepper) {
-            stepper->setStepRateLimits(static_cast<long>(spec.stepRateCeilingHz),
-                                       static_cast<long>(tuning.stepAccelStepsPerSec2));
-            stepper->setIdleDisable(tuning.idleDisable);
-        }
-        active->applyTuning(tuning);
+    QMetaObject::invokeMethod(c, [c, tuning, spec]() {
+        c->setStepRateLimits(static_cast<long>(spec.stepRateCeilingHz),
+                             static_cast<long>(tuning.stepAccelStepsPerSec2));
+        c->setIdleDisable(tuning.idleDisable);
+        c->applyTuning(tuning);
     }, Qt::QueuedConnection);
 }
 
-AxisControllerBase* AxisManager::controller(const QString& axisId) const
+StepperAxisController* AxisManager::controller(const QString& axisId) const
 {
     auto it = m_slots.constFind(axisId);
-    return (it == m_slots.constEnd()) ? nullptr : it->active;
+    return (it == m_slots.constEnd()) ? nullptr : it->controller;
 }
 
-AxisControllerBase* AxisManager::primary() const
+StepperAxisController* AxisManager::primary() const
 {
     if (m_order.isEmpty()) return nullptr;
     return controller(m_order.first());
-}
-
-GantryAxisController* AxisManager::dcController(const QString& axisId) const
-{
-    auto it = m_slots.constFind(axisId);
-    return (it == m_slots.constEnd()) ? nullptr : it->dc;
-}
-
-StepperAxisController* AxisManager::stepperController(const QString& axisId) const
-{
-    auto it = m_slots.constFind(axisId);
-    return (it == m_slots.constEnd()) ? nullptr : it->stepper;
 }
 
 AxisBoardLink* AxisManager::linkFor(const QString& axisId) const

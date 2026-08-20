@@ -10,7 +10,6 @@
 
 #include <QtTest/QtTest>
 #include "infrastructure/gantry/stepper_axis_controller.h"
-#include "infrastructure/gantry/gantryaxiscontroller.h"
 #include "infrastructure/gantry/axis_board_link.h"
 #include "infrastructure/gantry/fake_serial_transport.h"
 #include "hardware/gantry_adapter.h"
@@ -533,7 +532,7 @@ private slots:
     {
         auto* fake = new FakeSerialTransport();
         AxisBoardLink link(fake);
-        GantryAxisController  dc(&link, 0);
+        StepperAxisController dc(&link, 0);
         StepperAxisController stepper(&link, 1);
 
         dc.connectPort("COM_FAKE");          // only the DC axis is connected
@@ -554,7 +553,7 @@ private slots:
     {
         auto* fake = new FakeSerialTransport();
         AxisBoardLink link(fake);
-        GantryAxisController  dc(&link, 0);
+        StepperAxisController dc(&link, 0);
         StepperAxisController stepper(&link, 1);
 
         stepper.setActive(false);
@@ -576,7 +575,7 @@ private slots:
     {
         auto* fake = new FakeSerialTransport();
         AxisBoardLink link(fake);
-        GantryAxisController  dc(&link, 0);
+        StepperAxisController dc(&link, 0);
         StepperAxisController stepper(&link, 1);
 
         dc.connectPort("COM_FAKE");
@@ -604,7 +603,7 @@ private slots:
     {
         auto* fake = new FakeSerialTransport();
         AxisBoardLink link(fake);
-        GantryAxisController  dc(&link, 0);
+        StepperAxisController dc(&link, 0);
         StepperAxisController stepper(&link, 1);
         stepper.setEncoderCountsPerMm(80.0);
         stepper.setTravelLimits({0.0, 500.0});

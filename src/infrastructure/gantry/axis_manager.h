@@ -3,8 +3,7 @@
 // CamBotTimeline — Axis Manager
 //
 // Owns every external axis: the serial links, the controllers on them, and the
-// single thread they all live on. Hands out a controller by axis id and keeps
-// exactly one active per axis slot.
+// single thread they all live on. Hands out a controller by axis id.
 //
 // ─── Why one thread for all axes, not one each ───────────────────────────────
 // They are 50Hz serial-bound, so a thread each buys nothing, and axes sharing
@@ -12,25 +11,23 @@
 // from two threads at once. A thread per axis would make that a latent race
 // that only appears when two axes happen to be on one port.
 //
-// ─── Why both drive kinds are built per axis ─────────────────────────────────
-// A DC servo and a stepper are different classes, and which one an axis needs
-// is a project setting the operator can change at any time. Building only the
-// selected kind means tearing down and re-establishing the serial connection
-// on every change; building both and putting one to sleep costs an idle
-// QObject and nothing else. The sleeping one issues no polls (see
-// AxisControllerBase::setActive) but still receives faults for its own axis.
+// ─── One kind of axis ────────────────────────────────────────────────────────
+// Every axis is a step/dir channel into a closed-loop drive. The drive closes
+// its own loop internally, so the host runs no PID, holds no gains and has
+// nothing to tune — it streams step targets and reads back the count. If a
+// servo is fitted later it gets an encoder and the SAME logic, not a second
+// control model.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #include <QObject>
 #include <QHash>
 #include <QList>
 #include <QString>
+#include <QStringList>
 #include "core/types.h"
 
 class QThread;
 class AxisBoardLink;
-class AxisControllerBase;
-class GantryAxisController;
 class StepperAxisController;
 
 class AxisManager : public QObject
@@ -45,28 +42,19 @@ public:
 
     /// Creates the runtime for every configured axis, reusing one board link
     /// per distinct port. Safe to call repeatedly: axes that already exist are
-    /// re-selected rather than rebuilt, so a settings change never drops a
+    /// reconfigured rather than rebuilt, so a settings change never drops a
     /// live serial connection.
+    ///
+    /// Axes beyond kMaxAxes are refused rather than half-created, and a
+    /// duplicate board address is refused too — the link routes replies by
+    /// index, so a duplicate silently steals another axis's replies.
     void configure(const QList<AxisConfig>& axes);
 
-    /// The controller currently driving `axisId`, or nullptr if unknown.
-    /// Which concrete kind this is follows the axis's configured driveKind.
-    AxisControllerBase* controller(const QString& axisId) const;
+    StepperAxisController* controller(const QString& axisId) const;
 
     /// The first axis — "gantry". Everything not yet migrated to per-axis
-    /// lookups goes through here, which is what lets the rest of the codebase
-    /// move over one call site at a time instead of in one sweep.
-    AxisControllerBase* primary() const;
-
-    /// The concrete controllers for an axis, REGARDLESS of which is active.
-    ///
-    /// Needed because some consumers are drive-kind specific rather than
-    /// "whatever is driving": the PID tuning dialog only ever means the DC
-    /// controller, and it must stay reachable while a stepper is selected —
-    /// casting the active controller instead yields nullptr and whatever
-    /// used it silently stops working.
-    GantryAxisController*  dcController(const QString& axisId) const;
-    StepperAxisController* stepperController(const QString& axisId) const;
+    /// lookups goes through here.
+    StepperAxisController* primary() const;
 
     /// The board link serving `axisId`, for connect/disconnect at the BOARD
     /// level. Several axes can share one, so connecting is a property of the
@@ -76,32 +64,28 @@ public:
     QStringList axisIds() const { return m_order; }
     bool        hasAxis(const QString& axisId) const { return m_slots.contains(axisId); }
 
-    /// Pushes an axis's persisted configuration to whichever controller is
-    /// driving it, marshalled onto the axis thread.
+    /// Pushes an axis's persisted configuration to its controller, marshalled
+    /// onto the axis thread.
     void applyConfig(const AxisConfig& axis);
 
 signals:
-    /// A different concrete controller now drives this axis, because its
-    /// drive kind changed. Consumers holding a pointer must re-fetch it —
-    /// notably the playback adapter, which otherwise keeps streaming to the
-    /// axis that is no longer being driven.
-    void activeControllerChanged(const QString& axisId, AxisControllerBase* controller);
+    /// An axis was rejected by configure(). Carries a reason fit to show the
+    /// operator: silently dropping an axis would leave them with a configured
+    /// axis that never moves and no indication why.
+    void axisRejected(const QString& axisId, const QString& reason);
 
 private:
     struct Slot {
         AxisConfig             config;
-        AxisBoardLink*         link    = nullptr;
-        GantryAxisController*  dc      = nullptr;
-        StepperAxisController* stepper = nullptr;
-        AxisControllerBase*    active  = nullptr;
+        AxisBoardLink*         link       = nullptr;
+        StepperAxisController* controller = nullptr;
     };
 
-    void   buildSlot(const AxisConfig& axis);
-    void   selectForDriveKind(Slot& slot);
+    void           buildSlot(const AxisConfig& axis);
     AxisBoardLink* linkForPort(const QString& portName);
 
-    QThread*                m_thread = nullptr;
-    QHash<QString, Slot>    m_slots;
-    QStringList             m_order;      // configuration order; first is primary
+    QThread*                       m_thread = nullptr;
+    QHash<QString, Slot>           m_slots;
+    QStringList                    m_order;   // configuration order; first is primary
     QHash<QString, AxisBoardLink*> m_linksByPort;
 };

@@ -88,7 +88,7 @@ struct LensMapping {
 
 /// Physical travel range for the linear gantry axis. Velocity/acceleration
 /// limits are configured separately, directly on timeline::GantryTrack (and
-/// mirrored to GantryAxisController), since they're already integrated into
+/// mirrored to the axis controller), since they're already integrated into
 /// its trapezoidal motion profiling — this struct only covers position range.
 struct GantryLimits {
     double minMm = 0.0;
@@ -102,19 +102,6 @@ struct GantryLimits {
 enum class GantryAxisType : int {
     Linear = 0,   // gantry / slider — units are mm
     Rotary = 1    // bare motor — units are degrees
-};
-
-/// How the axis is driven. Orthogonal to GantryAxisType, which is about units:
-/// either drive kind can be linear or rotary.
-///
-/// This is the discriminator that decides which controller class runs the axis,
-/// and it is deliberately not "just a flag": a DC servo is closed by a host-side
-/// PID over PWM, while a CL57C stepper is handed step targets and closes its own
-/// loop. PID gains, the PWM ramp and the tuning workflows exist only for the
-/// former.
-enum class AxisDriveKind : int {
-    DcServoPwm        = 0,   // H-bridge + quadrature encoder, host-side PID
-    StepDirClosedLoop = 1    // STEP/DIR into a closed-loop driver (CL57C)
 };
 
 /// Real motor-spec parameters for the external axis, used to DERIVE its
@@ -133,14 +120,12 @@ struct GantryMotorSpec {
     bool   configured        = false;
     GantryAxisType axisType  = GantryAxisType::Linear;
 
-    AxisDriveKind driveKind  = AxisDriveKind::DcServoPwm;
-
-    /// Stepper only: the driver's pulses/rev DIP setting. Combined with
+    /// The driver's pulses/rev DIP setting. Combined with
     /// gearRatio and mmPerRev this gives steps per unit, which is the same
     /// physical constant GantryTuning::countsPerUnit holds for a DC encoder.
     double pulsesPerRev      = 1600.0;
 
-    /// Stepper only: max step rate the axis can actually SUSTAIN.
+    /// Max step rate the axis can actually SUSTAIN.
     ///
     /// Lives here rather than with the tuning because it is an INPUT TO
     /// VELOCITY DERIVATION, and it usually binds before motor RPM does — at
@@ -167,15 +152,13 @@ struct GantryMotorSpec {
 /// `travelLimits` reuses GantryLimits; its minMm/maxMm members are read as
 /// generic axis units (mm when Linear, degrees when Rotary).
 struct GantryTuning {
-    double       countsPerUnit  = 100.0;  // encoder counts per mm (Linear) or per degree (Rotary)
+    /// Steps per unit of axis travel: mm for a Linear axis, degrees for a
+    /// Rotary one. Derivable from the driver's pulses/rev, the gear ratio and
+    /// the travel per output rev — see motion::deriveStepsPerUnit.
+    double       countsPerUnit  = 100.0;
     GantryLimits travelLimits;            // min/max travel, in axis units
-    int          pwmRampPerTick = 15;     // max PWM change per 20ms control tick
-    double       pidKp = 0.8;             // defaults mirror GantryAxisController's
-    double       pidKi = 0.1;
-    double       pidKd = 0.05;
     bool         configured = false;
 
-    // ─── Stepper-only ────────────────────────────────────────────────────
     // The step-rate ceiling lives in GantryMotorSpec, not here — see the note
     // there. These two are board-side clamps and policy, not motion inputs.
     /// Step acceleration clamp, applied on the board.
@@ -271,6 +254,11 @@ struct TimelineSegment {
 /// driveKind and axisType are deliberately NOT repeated here — they live in
 /// motorSpec, and duplicating them would create two answers to "what kind of
 /// axis is this" that could disagree after a partial edit.
+/// The most axes one board drives. Three step/dir channels fit an Uno
+/// comfortably now that there is no encoder decoder competing for interrupts;
+/// beyond that the pin table, not the CPU, is the limit.
+constexpr int kMaxAxes = 3;
+
 struct AxisConfig {
     /// Stable key, used in the timeline's track map and in saved files. The
     /// first axis is "gantry" forever: it is what every pre-existing project
@@ -284,18 +272,10 @@ struct AxisConfig {
     /// Serial port shared with any other axes on the same board.
     QString portName;
 
-    /// Board address of this axis's DC-servo channel.
+    /// Board address of this axis. Several axes share one board and are told
+    /// apart only by this, so two axes must never carry the same index — the
+    /// link routes replies by it, and a duplicate silently steals them.
     int firmwareAxisIndex = 0;
-
-    /// Board address of this axis's STEP/DIR channel.
-    ///
-    /// Deliberately separate from firmwareAxisIndex: the firmware gives each
-    /// DRIVE KIND its own address (it enumerates "A 0 DC", "A 1 STEP"), so one
-    /// logical axis occupies two of them and which is live follows the drive
-    /// kind. Using a single index put both controllers on the same address,
-    /// where the second silently took over the first's replies — the DC axis
-    /// then never saw its own encoder or limit switch.
-    int firmwareStepIndex = 1;
 };
 
 struct Project {

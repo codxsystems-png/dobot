@@ -6,11 +6,10 @@
 // internal encoder, so the host runs no PID at all: it streams absolute step
 // targets and the board's Timer1 clocks pulses toward them.
 //
-// That makes this a genuinely different control model from the DC servo, not a
-// variant of it — which is why it is a separate class rather than a driveKind
-// branch inside GantryAxisController. PID gains, the PWM ramp, the step test
-// and the relay auto-tune are all meaningless here, and the last two are
-// actively unsafe: they command raw PWM at an axis with no H-bridge.
+// This is the only axis control model the rig has. There is no host-side PID,
+// no gains and nothing to tune: the drive does that internally. If a servo is
+// fitted later it gets an encoder and the SAME logic, rather than a second
+// control model living alongside this one.
 //
 // THE THING TO UNDERSTAND ABOUT THIS AXIS: the host's position is what it
 // ASKED FOR, not what happened. A missed step is invisible from here — Q

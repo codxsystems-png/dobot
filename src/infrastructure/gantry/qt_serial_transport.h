@@ -2,7 +2,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // CamBotTimeline — Real QSerialPort-backed transport (Phase 7)
 // The only file that touches QSerialPort directly for the gantry link;
-// GantryAxisController talks to ISerialTransport, never this class by name.
+// The axis controller talks to ISerialTransport, never this class by name.
 // Only meaningful when Qt6::SerialPort is available (HAS_SERIALPORT).
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -35,5 +35,5 @@ private:
 
 /// Returns a QtSerialTransport when Qt6::SerialPort is available, nullptr
 /// otherwise — the one place that branches on HAS_SERIALPORT so
-/// GantryAxisController doesn't have to.
+/// the axis controller doesn't have to.
 ISerialTransport* createDefaultSerialTransport(QObject* parent);

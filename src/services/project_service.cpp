@@ -25,7 +25,6 @@ QJsonObject axisToJson(const AxisConfig& a)
     o["displayName"]       = a.displayName;
     o["portName"]          = a.portName;
     o["firmwareAxisIndex"] = a.firmwareAxisIndex;
-    o["firmwareStepIndex"] = a.firmwareStepIndex;
 
     QJsonObject spec;
     spec["motorRpm"]          = a.motorSpec.motorRpm;
@@ -34,7 +33,6 @@ QJsonObject axisToJson(const AxisConfig& a)
     spec["maxAccelMmPerSec2"] = a.motorSpec.maxAccelMmPerSec2;
     spec["configured"]        = a.motorSpec.configured;
     spec["axisType"]          = static_cast<int>(a.motorSpec.axisType);
-    spec["driveKind"]         = static_cast<int>(a.motorSpec.driveKind);
     spec["pulsesPerRev"]      = a.motorSpec.pulsesPerRev;
     spec["stepRateCeilingHz"] = a.motorSpec.stepRateCeilingHz;
     o["motorSpec"] = spec;
@@ -43,10 +41,6 @@ QJsonObject axisToJson(const AxisConfig& a)
     t["countsPerUnit"]         = a.tuning.countsPerUnit;
     t["travelMin"]             = a.tuning.travelLimits.minMm;
     t["travelMax"]             = a.tuning.travelLimits.maxMm;
-    t["pwmRampPerTick"]        = a.tuning.pwmRampPerTick;
-    t["pidKp"]                 = a.tuning.pidKp;
-    t["pidKi"]                 = a.tuning.pidKi;
-    t["pidKd"]                 = a.tuning.pidKd;
     t["configured"]            = a.tuning.configured;
     t["stepAccelStepsPerSec2"] = a.tuning.stepAccelStepsPerSec2;
     t["idleDisable"]           = a.tuning.idleDisable;
@@ -61,7 +55,6 @@ AxisConfig axisFromJson(const QJsonObject& o)
     a.displayName       = o["displayName"].toString("Gantry");
     a.portName          = o["portName"].toString();
     a.firmwareAxisIndex = o["firmwareAxisIndex"].toInt(0);
-    a.firmwareStepIndex = o["firmwareStepIndex"].toInt(1);
 
     const QJsonObject spec = o["motorSpec"].toObject();
     a.motorSpec.motorRpm          = spec["motorRpm"].toDouble(3000.0);
@@ -70,7 +63,6 @@ AxisConfig axisFromJson(const QJsonObject& o)
     a.motorSpec.maxAccelMmPerSec2 = spec["maxAccelMmPerSec2"].toDouble(400.0);
     a.motorSpec.configured        = spec["configured"].toBool(false);
     a.motorSpec.axisType          = static_cast<GantryAxisType>(spec["axisType"].toInt(0));
-    a.motorSpec.driveKind         = static_cast<AxisDriveKind>(spec["driveKind"].toInt(0));
     a.motorSpec.pulsesPerRev      = spec["pulsesPerRev"].toDouble(1600.0);
     a.motorSpec.stepRateCeilingHz = spec["stepRateCeilingHz"].toDouble(3500.0);
 
@@ -78,10 +70,6 @@ AxisConfig axisFromJson(const QJsonObject& o)
     a.tuning.countsPerUnit         = t["countsPerUnit"].toDouble(100.0);
     a.tuning.travelLimits.minMm    = t["travelMin"].toDouble(0.0);
     a.tuning.travelLimits.maxMm    = t["travelMax"].toDouble(1000.0);
-    a.tuning.pwmRampPerTick        = t["pwmRampPerTick"].toInt(15);
-    a.tuning.pidKp                 = t["pidKp"].toDouble(0.8);
-    a.tuning.pidKi                 = t["pidKi"].toDouble(0.1);
-    a.tuning.pidKd                 = t["pidKd"].toDouble(0.05);
     a.tuning.configured            = t["configured"].toBool(false);
     a.tuning.stepAccelStepsPerSec2 = t["stepAccelStepsPerSec2"].toDouble(40000.0);
     a.tuning.idleDisable           = t["idleDisable"].toBool(false);
@@ -344,7 +332,6 @@ QJsonObject ProjectService::projectToJson() const
     motorSpec["maxAccelMmPerSec2"] = m_project.gantryMotorSpec.maxAccelMmPerSec2;
     motorSpec["configured"]        = m_project.gantryMotorSpec.configured;
     motorSpec["axisType"]          = static_cast<int>(m_project.gantryMotorSpec.axisType);
-    motorSpec["driveKind"]         = static_cast<int>(m_project.gantryMotorSpec.driveKind);
     motorSpec["pulsesPerRev"]      = m_project.gantryMotorSpec.pulsesPerRev;
     motorSpec["stepRateCeilingHz"] = m_project.gantryMotorSpec.stepRateCeilingHz;
     obj["gantryMotorSpec"] = motorSpec;
@@ -353,10 +340,6 @@ QJsonObject ProjectService::projectToJson() const
     tuning["countsPerUnit"]  = m_project.gantryTuning.countsPerUnit;
     tuning["travelMin"]      = m_project.gantryTuning.travelLimits.minMm;
     tuning["travelMax"]      = m_project.gantryTuning.travelLimits.maxMm;
-    tuning["pwmRampPerTick"] = m_project.gantryTuning.pwmRampPerTick;
-    tuning["pidKp"]          = m_project.gantryTuning.pidKp;
-    tuning["pidKi"]          = m_project.gantryTuning.pidKi;
-    tuning["pidKd"]          = m_project.gantryTuning.pidKd;
     tuning["configured"]     = m_project.gantryTuning.configured;
     tuning["stepAccelStepsPerSec2"] = m_project.gantryTuning.stepAccelStepsPerSec2;
     tuning["idleDisable"]           = m_project.gantryTuning.idleDisable;
@@ -496,10 +479,6 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
         m_project.gantryMotorSpec.configured        = motorSpec["configured"].toBool(false);
         m_project.gantryMotorSpec.axisType =
             static_cast<GantryAxisType>(motorSpec["axisType"].toInt(0)); // 0 == Linear
-        // Absent in files written before steppers existed, and 0 is DcServoPwm,
-        // so every one of those loads as exactly the axis it always was.
-        m_project.gantryMotorSpec.driveKind =
-            static_cast<AxisDriveKind>(motorSpec["driveKind"].toInt(0));
         m_project.gantryMotorSpec.pulsesPerRev = motorSpec["pulsesPerRev"].toDouble(1600.0);
         m_project.gantryMotorSpec.stepRateCeilingHz =
             motorSpec["stepRateCeilingHz"].toDouble(3500.0);
@@ -512,10 +491,6 @@ bool ProjectService::projectFromJson(const QJsonObject& obj)
         m_project.gantryTuning.countsPerUnit      = tuning["countsPerUnit"].toDouble(legacyCounts);
         m_project.gantryTuning.travelLimits.minMm = tuning["travelMin"].toDouble(0.0);
         m_project.gantryTuning.travelLimits.maxMm = tuning["travelMax"].toDouble(1000.0);
-        m_project.gantryTuning.pwmRampPerTick     = tuning["pwmRampPerTick"].toInt(15);
-        m_project.gantryTuning.pidKp              = tuning["pidKp"].toDouble(0.8);
-        m_project.gantryTuning.pidKi              = tuning["pidKi"].toDouble(0.1);
-        m_project.gantryTuning.pidKd              = tuning["pidKd"].toDouble(0.05);
         m_project.gantryTuning.configured         = tuning["configured"].toBool(false);
         m_project.gantryTuning.stepAccelStepsPerSec2 = tuning["stepAccelStepsPerSec2"].toDouble(40000.0);
         m_project.gantryTuning.idleDisable           = tuning["idleDisable"].toBool(false);

@@ -65,11 +65,6 @@ target_sources(test_motion_estimator PRIVATE
     ${CMAKE_SOURCE_DIR}/src/math/motion_profile.cpp
 )
 
-# Test: Step Response Metrics (PID tuning: overshoot / settling / rise time)
-add_cambot_test(test_step_response_metrics test_step_response_metrics.cpp)
-target_sources(test_step_response_metrics PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/core/step_response_metrics.cpp
-)
 
 # Test: Axis Board Protocol v2 (axis-addressed wire format, tagged replies)
 add_cambot_test(test_axis_protocol test_axis_protocol.cpp)
@@ -89,15 +84,7 @@ target_sources(test_axis_board_link PRIVATE
     ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
 )
 
-# Test: Relay Auto-Tune (Astrom-Hagglund Ku/Tu extraction -> TL/ZN mapping)
-add_cambot_test(test_relay_tune test_relay_tune.cpp)
-target_sources(test_relay_tune PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/core/relay_tune.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/step_response_metrics.cpp
-)
 
-# Test: PID Controller (gantry closed-loop upgrade)
-add_cambot_test(test_pid_controller test_pid_controller.cpp)
 
 # Test: Structured Logger (persistent diagnostics)
 add_cambot_test(test_structured_logger test_structured_logger.cpp)
@@ -127,7 +114,6 @@ target_sources(test_timeline_compiler PRIVATE
     ${CMAKE_SOURCE_DIR}/src/application/gantryservice.cpp
     ${CMAKE_SOURCE_DIR}/src/application/fizservice.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
     ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/serial_transport.cpp
@@ -138,19 +124,6 @@ target_sources(test_timeline_compiler PRIVATE
     ${CMAKE_SOURCE_DIR}/src/infrastructure/fiz/nucleusprotocol.cpp
 )
 
-# Test: Gantry Axis Controller (Phase 7: via FakeSerialTransport, no hardware)
-add_cambot_test(test_gantryaxiscontroller test_gantryaxiscontroller.cpp)
-target_sources(test_gantryaxiscontroller PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/serial_transport.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/qt_serial_transport.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/fake_serial_transport.cpp
-    ${CMAKE_SOURCE_DIR}/src/services/connection_state_machine.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/structured_logger.cpp
-)
 
 # Test: Path Recorder Service (Phase 9: continuous-path teach)
 add_cambot_test(test_path_recorder_service test_path_recorder_service.cpp)
@@ -180,7 +153,6 @@ target_sources(test_playback_engine_gating PRIVATE
 add_cambot_test(test_stepper_axis_controller test_stepper_axis_controller.cpp)
 target_sources(test_stepper_axis_controller PRIVATE
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/stepper_axis_controller.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
     ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp
@@ -225,7 +197,6 @@ add_cambot_test(test_axis_manager test_axis_manager.cpp)
 target_sources(test_axis_manager PRIVATE
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_controller_base.cpp
-    ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/gantryaxiscontroller.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/stepper_axis_controller.cpp
     ${CMAKE_SOURCE_DIR}/src/infrastructure/gantry/axis_board_link.cpp
     ${CMAKE_SOURCE_DIR}/src/core/axis_protocol.cpp

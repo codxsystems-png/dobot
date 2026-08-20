@@ -18,6 +18,11 @@ private slots:
         spec.motorRpm = 3000.0;
         spec.gearRatio = 10.0;
         spec.mmPerRev = 5.0;
+        // Every axis is a stepper now, so the step-rate ceiling always
+        // participates. These cases exercise the RPM path specifically, so
+        // the ceiling is set high enough not to bind — the ceiling has its
+        // own tests below.
+        spec.stepRateCeilingHz = 1.0e9;
         // outputRpm = 3000/10 = 300; maxVel = 300*5/60 = 25.0 mm/s
         QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 25.0);
     }
@@ -29,6 +34,11 @@ private slots:
         spec.gearRatio = 10.0;
         spec.mmPerRev = 999.0;  // must be ignored entirely in Rotary mode
         spec.axisType = GantryAxisType::Rotary;
+        // Every axis is a stepper now, so the step-rate ceiling always
+        // participates. These cases exercise the RPM path specifically, so
+        // the ceiling is set high enough not to bind — the ceiling has its
+        // own tests below.
+        spec.stepRateCeilingHz = 1.0e9;
         // outputRpm = 600/10 = 60 rev/min = 1 rev/s = 360 deg/s
         QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 360.0);
     }
@@ -88,6 +98,12 @@ private slots:
         spec.mmPerRev = 5.0; // vMax = 25.0 mm/s
         spec.maxAccelMmPerSec2 = 50.0;
         spec.configured = true;
+        // Every axis is a stepper now, so the step-rate ceiling always
+        // participates. These cases exercise the RPM path specifically, so
+        // the ceiling is set high enough not to bind — the ceiling has its
+        // own tests below.
+        spec.stepRateCeilingHz = 1.0e9;
+
 
         CameraPoint from, to;
         from.id = "a"; from.gantryPositionMm = 0.0;
@@ -116,7 +132,6 @@ private slots:
     void testStepsPerUnitFromPulsesGearAndPitch()
     {
         GantryMotorSpec spec;
-        spec.driveKind    = AxisDriveKind::StepDirClosedLoop;
         spec.pulsesPerRev = 1600.0;
         spec.gearRatio    = 1.0;
         spec.mmPerRev     = 4.0;          // 4mm leadscrew
@@ -127,7 +142,6 @@ private slots:
     void testStepsPerUnitRotaryUses360()
     {
         GantryMotorSpec spec;
-        spec.driveKind    = AxisDriveKind::StepDirClosedLoop;
         spec.axisType     = GantryAxisType::Rotary;
         spec.pulsesPerRev = 1800.0;
         spec.gearRatio    = 2.0;          // 2:1 reducer
@@ -142,7 +156,6 @@ private slots:
     void testStepCeilingCapsVelocityBelowRpm()
     {
         GantryMotorSpec spec;
-        spec.driveKind         = AxisDriveKind::StepDirClosedLoop;
         spec.motorRpm          = 3000.0;
         spec.gearRatio         = 1.0;
         spec.mmPerRev          = 4.0;
@@ -158,7 +171,6 @@ private slots:
     void testRpmStillBindsWhenCeilingIsGenerous()
     {
         GantryMotorSpec spec;
-        spec.driveKind         = AxisDriveKind::StepDirClosedLoop;
         spec.motorRpm          = 300.0;
         spec.gearRatio         = 1.0;
         spec.mmPerRev          = 4.0;
@@ -169,22 +181,6 @@ private slots:
         QVERIFY(!motion::stepCeilingIsBinding(spec));
     }
 
-    /// A DC axis has no step rate, so the ceiling must never touch it — this
-    /// is what keeps every existing project's derived times identical.
-    void testDcAxisIsUnaffectedByStepFields()
-    {
-        GantryMotorSpec spec;
-        spec.driveKind         = AxisDriveKind::DcServoPwm;
-        spec.motorRpm          = 3000.0;
-        spec.gearRatio         = 1.0;
-        spec.mmPerRev          = 4.0;
-        spec.pulsesPerRev      = 1600.0;
-        spec.stepRateCeilingHz = 1.0;        // absurd, and must be ignored
-
-        QCOMPARE(motion::deriveMaxGantryVelocityUnitsPerSec(spec), 200.0);
-        QVERIFY(!motion::stepCeilingIsBinding(spec));
-        QCOMPARE(motion::deriveStepCeilingVelocityUnitsPerSec(spec), 0.0);
-    }
 };
 
 QTEST_MAIN(TestMotionEstimator)

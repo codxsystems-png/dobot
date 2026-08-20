@@ -48,8 +48,6 @@ set(CORE_SOURCES
     src/core/byte_stream_buffer.cpp
     src/core/structured_logger.cpp
     src/core/motion_estimator.cpp
-    src/core/step_response_metrics.cpp
-    src/core/relay_tune.cpp
     src/core/axis_protocol.cpp
 )
 
@@ -118,8 +116,6 @@ list(APPEND UI_SOURCES
     src/ui/diagnostics_panel.cpp
     src/ui/dialogs/calibration_dialog.cpp
     src/ui/dialogs/gantry_setup_dialog.cpp
-    src/ui/dialogs/gantry_tuning_dialog.cpp
-    src/ui/widgets/step_response_plot.cpp
 )
 
 # Phase 7 — FIZ (Tilta Nucleus-M) — requires Qt6::SerialPort
@@ -137,7 +133,6 @@ set(FIZ_SOURCES
 # Phase 8 — Gantry
 set(GANTRY_SOURCES
     src/infrastructure/gantry/axis_controller_base.cpp
-    src/infrastructure/gantry/gantryaxiscontroller.cpp
     src/infrastructure/gantry/stepper_axis_controller.cpp
     src/infrastructure/gantry/axis_manager.cpp
     src/infrastructure/gantry/axis_board_link.cpp
