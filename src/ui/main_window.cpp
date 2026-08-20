@@ -938,8 +938,16 @@ void MainWindow::createConnections()
                 if (axisId == kPrimaryAxis) return;      // handled above
                 GantryKeyframe kf;
                 kf.id         = QUuid::createUuid().toString();
-                kf.time       = time;
                 kf.positionMm = value;
+                // Same floor as the primary: placed by hand at an arbitrary
+                // time, so snap it to when this axis can actually get there
+                // rather than letting Play reject the whole timeline.
+                kf.time = flooredAxisKeyframeTime(axisId, kf.id, time, value);
+                if (kf.time > time + 1e-6) {
+                    statusBar()->showMessage(
+                        QString("%1 keyframe placed at %2s — the axis cannot reach that "
+                                "position any sooner.").arg(axisId).arg(kf.time, 0, 'f', 2), 5000);
+                }
                 auto kfs = m_projectService->project().axisKeyframes.value(axisId);
                 kfs.append(kf);
                 m_projectService->setAxisKeyframes(axisId, kfs);
@@ -948,8 +956,15 @@ void MainWindow::createConnections()
     connect(m_fizTrackWidget, &FizTrackWidget::axisKeyframeMoved,
             this, [this](const QString& axisId, const GantryKeyframe& kf) {
                 if (axisId == kPrimaryAxis) return;
+                GantryKeyframe adjusted = kf;
+                adjusted.time = flooredAxisKeyframeTime(axisId, kf.id, kf.time, kf.positionMm);
+                if (adjusted.time > kf.time + 1e-6) {
+                    statusBar()->showMessage(
+                        QString("%1 keyframe clamped to %2s — the axis cannot reach that "
+                                "position any sooner.").arg(axisId).arg(adjusted.time, 0, 'f', 2), 5000);
+                }
                 auto kfs = m_projectService->project().axisKeyframes.value(axisId);
-                for (auto& e : kfs) if (e.id == kf.id) e = kf;
+                for (auto& e : kfs) if (e.id == adjusted.id) e = adjusted;
                 m_projectService->setAxisKeyframes(axisId, kfs);
                 refreshTrackWidgetKeyframes();
             });
@@ -1334,19 +1349,33 @@ void MainWindow::applyAxisConfiguration()
     refreshAxisPointers();
 }
 
-double MainWindow::flooredGantryKeyframeTime(const QString& excludeId,
-                                             double proposedTime,
-                                             double positionUnits) const
+double MainWindow::flooredAxisKeyframeTime(const QString& axisId,
+                                           const QString& excludeId,
+                                           double proposedTime,
+                                           double positionUnits) const
 {
-    if (!m_gantryService || !m_projectService) return proposedTime;
+    if (!m_projectService) return proposedTime;
 
-    const GantryMotorSpec& spec = m_projectService->project().gantryMotorSpec;
+    // Each axis is floored against ITS OWN spec and ITS OWN keyframes. Using
+    // the primary's for everything would floor a fast axis against a slow
+    // one's limits, and — worse — leave every non-primary axis unfloored,
+    // so an unreachable diamond survived until Play and was then rejected as
+    // a whole-timeline preflight failure instead of quietly snapping.
+    GantryMotorSpec spec = m_projectService->project().gantryMotorSpec;
+    for (const AxisConfig& a : m_projectService->project().axes) {
+        if (a.id == axisId) { spec = a.motorSpec; break; }
+    }
+
+    const QList<GantryKeyframe> kfs =
+        (axisId == kPrimaryAxis && m_gantryService)
+            ? m_gantryService->keyframes()
+            : m_projectService->project().axisKeyframes.value(axisId);
 
     // Nearest keyframe strictly before the proposed time (excluding the one
     // being moved, which would otherwise anchor against itself).
     bool havePrev = false;
     GantryKeyframe prev;
-    for (const auto& kf : m_gantryService->keyframes()) {
+    for (const auto& kf : kfs) {
         if (kf.id == excludeId) continue;
         if (kf.time <= proposedTime && (!havePrev || kf.time > prev.time)) {
             prev = kf;
@@ -1355,9 +1384,16 @@ double MainWindow::flooredGantryKeyframeTime(const QString& excludeId,
     }
     if (!havePrev) return proposedTime; // nothing precedes it — unconstrained
 
-    double minGap = motion::minGantryDurationForDistanceSec(
+    const double minGap = motion::minGantryDurationForDistanceSec(
         positionUnits - prev.positionMm, spec, 0.0);
     return qMax(proposedTime, prev.time + minGap);
+}
+
+double MainWindow::flooredGantryKeyframeTime(const QString& excludeId,
+                                             double proposedTime,
+                                             double positionUnits) const
+{
+    return flooredAxisKeyframeTime(kPrimaryAxis, excludeId, proposedTime, positionUnits);
 }
 
 void MainWindow::pushGantryTuning()

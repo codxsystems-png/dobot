@@ -181,6 +181,43 @@ private slots:
         QVERIFY(!motion::stepCeilingIsBinding(spec));
     }
 
+
+    // ─── Per-axis feasibility ─────────────────────────────────────────────
+
+    /// Each axis must be floored against ITS OWN spec. Two axes with
+    /// different gearing need different minimum times for the same travel, so
+    /// flooring everything against the primary's numbers is wrong in both
+    /// directions: it over-constrains a fast axis and, worse, under-constrains
+    /// a slow one into a move it cannot make.
+    void testDifferentAxesGiveDifferentMinimumDurations()
+    {
+        GantryMotorSpec fast;
+        fast.motorRpm          = 3000.0;
+        fast.gearRatio         = 1.0;
+        fast.mmPerRev          = 8.0;
+        fast.pulsesPerRev      = 1600.0;
+        fast.stepRateCeilingHz = 8000.0;
+        fast.maxAccelMmPerSec2 = 500.0;
+        fast.configured        = true;
+
+        GantryMotorSpec slow = fast;
+        slow.gearRatio = 10.0;          // ten times the reduction
+
+        const double tFast = motion::minGantryDurationForDistanceSec(50.0, fast, 0.0);
+        const double tSlow = motion::minGantryDurationForDistanceSec(50.0, slow, 0.0);
+
+        QVERIFY2(tSlow > tFast,
+                 "a more heavily geared axis must need longer for the same travel");
+    }
+
+    /// An unconfigured axis must fall back rather than fabricate a physics
+    /// answer from defaults — otherwise placing a keyframe on a brand-new
+    /// axis snaps it to a time derived from numbers nobody entered.
+    void testUnconfiguredAxisFallsBackInsteadOfGuessing()
+    {
+        GantryMotorSpec spec;            // configured == false
+        QCOMPARE(motion::minGantryDurationForDistanceSec(500.0, spec, 7.5), 7.5);
+    }
 };
 
 QTEST_MAIN(TestMotionEstimator)

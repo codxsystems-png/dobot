@@ -108,6 +108,10 @@ private:
     /// preceding keyframe is physically achievable. Without this, placing or
     /// dragging a diamond on the GANTRY curve row can create a gap that only
     /// fails at Play time. Returns the (possibly raised) time.
+    /// Earliest time `axisId` can actually reach `positionUnits` from its own
+    /// preceding keyframe, using that axis's own motor spec.
+    double flooredAxisKeyframeTime(const QString& axisId, const QString& excludeId,
+                                   double proposedTime, double positionUnits) const;
     double flooredGantryKeyframeTime(const QString& excludeId,
                                      double proposedTime,
                                      double positionUnits) const;
