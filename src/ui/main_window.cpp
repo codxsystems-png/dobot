@@ -355,13 +355,16 @@ void MainWindow::createCentralLayout()
         // driveKind lives in the motor spec, so this is the signal that
         // actually carries a change of it.
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
-                this, [this](const GantryMotorSpec&) { selectAxisControllerForDriveKind(); });
+                this, [this](const GantryMotorSpec&) { applyAxisConfiguration(); });
         // Travel limits define each axis row's vertical scale, so the rows are
         // rebuilt whenever the tuning or the axis list changes.
         connect(m_projectService, &ProjectService::gantryTuningChanged,
                 this, [this](const GantryTuning&) { refreshTrackWidgetAxes(); });
         connect(m_projectService, &ProjectService::axesChanged,
-                this, [this](const QList<AxisConfig>&) { refreshTrackWidgetAxes(); });
+                this, [this](const QList<AxisConfig>&) {
+                    applyAxisConfiguration();     // build/reconfigure the runtimes
+                    refreshTrackWidgetAxes();     // then redraw to match
+                });
         // Axis type drives the units shown on the jog readout (mm vs degrees).
         connect(m_projectService, &ProjectService::gantryMotorSpecChanged,
                 this, [this](const GantryMotorSpec& spec) {
@@ -1170,13 +1173,13 @@ void MainWindow::refreshAxisPointers()
     }
 }
 
-void MainWindow::selectAxisControllerForDriveKind()
+void MainWindow::applyAxisConfiguration()
 {
     if (!m_axisManager || !m_projectService) return;
 
-    // The manager owns the switching, the wake/sleep pair and the logging,
-    // and announces activeControllerChanged only when the concrete class
-    // really changes - which is what re-points our cached pointers.
+    // The manager creates whatever is new, reconfigures whatever exists, and
+    // refuses anything it cannot honour (too many axes, or a duplicate board
+    // address) with a reason that reaches the diagnostics panel.
     QList<AxisConfig> axes = m_projectService->project().axes;
     if (axes.isEmpty()) {
         AxisConfig primary;
@@ -1222,7 +1225,7 @@ void MainWindow::pushGantryTuning()
     // to whichever controller ends up driving it, so this is one call now.
     // Doing it in that order matters: pushing first would land the settings
     // on the axis we are about to stop driving.
-    selectAxisControllerForDriveKind();
+    applyAxisConfiguration();
 }
 
 void MainWindow::onDiagnostics()

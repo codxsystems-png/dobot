@@ -120,7 +120,8 @@ void StepperAxisController::homeGantry()
     m_state   = State::Idle;
 
     StructuredLogger::instance().log(StructuredLogger::Category::Motion,
-        "StepperAxisController", "Zero set at current position.");
+        "StepperAxisController",
+        QString("Axis %1: zero set at current position.").arg(m_axisIndex));
 
     emit positionChanged(0.0);
     emit homed();
@@ -143,8 +144,8 @@ void StepperAxisController::tick(double targetUnits)
         if (entering) {
             StructuredLogger::instance().log(StructuredLogger::Category::Motion,
                 "StepperAxisController",
-                QString("Tracking started: target %1 units -> %2 steps.")
-                    .arg(clamped, 0, 'f', 3).arg(m_targetSteps));
+                QString("Axis %1: tracking started, target %2 units -> %3 steps.")
+                    .arg(m_axisIndex).arg(clamped, 0, 'f', 3).arg(m_targetSteps));
         }
     }
 
@@ -182,8 +183,9 @@ void StepperAxisController::jogGantry(int stepsPerSec)
     // which.
     StructuredLogger::instance().log(StructuredLogger::Category::Motion,
         "StepperAxisController",
-        QString("Jog commanded: requested %1, sent %2 steps/s (vmax %3, enabled %4, halted %5)")
-            .arg(requested).arg(m_jogRate).arg(m_vmax)
+        QString("Axis %1: jog commanded, requested %2, sent %3 steps/s "
+                "(vmax %4, enabled %5, halted %6)")
+            .arg(m_axisIndex).arg(requested).arg(m_jogRate).arg(m_vmax)
             .arg(m_enabled ? "yes" : "no").arg(m_halted ? "yes" : "no"));
 }
 
@@ -194,7 +196,7 @@ void StepperAxisController::stopJog()
     m_state   = State::Idle;
     if (m_link) m_link->send(axisproto::cmdJog(m_axisIndex, 0));
     StructuredLogger::instance().log(StructuredLogger::Category::Motion,
-        "StepperAxisController", "Jog stopped.");
+        "StepperAxisController", QString("Axis %1: jog stopped.").arg(m_axisIndex));
 
     // The board decelerates to a standstill and adopts wherever that lands as
     // its target. Follow it, or the next tick would command a jump back to the

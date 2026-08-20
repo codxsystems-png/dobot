@@ -171,7 +171,7 @@ private:
     /// selects, and re-wires the playback path to it.
     AxisManager* m_axisManager = nullptr;
 
-    void selectAxisControllerForDriveKind();
+    void applyAxisConfiguration();
     /// Re-reads the active controller from the manager and re-points
     /// everything that caches it.
     void refreshAxisPointers();
