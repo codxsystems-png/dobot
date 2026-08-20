@@ -314,7 +314,13 @@ void StepperAxisController::onReply(const axisproto::Reply& reply)
 
     case '!': {   // asynchronous fault — arrives whenever the board decides
         const int code = reply.args.isEmpty() ? 0 : reply.args.at(0).toInt();
-        const QString text = reply.args.size() > 1 ? reply.args.at(1) : QString("fault");
+        // The text is free-form and multi-word ("bad axis", "unknown
+        // command", "setpoint stream stopped"), so take everything after the
+        // code. Reading only the first token turned every fault into a
+        // useless one-word stub.
+        const QString text = reply.args.size() > 1
+            ? QStringList(reply.args.mid(1)).join(' ')
+            : QString("fault");
 
         const QString msg = QString("Stepper axis fault %1: %2").arg(code).arg(text);
         StructuredLogger::instance().log(StructuredLogger::Category::Safety,
